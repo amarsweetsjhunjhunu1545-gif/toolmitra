@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ToolMitra Pro - Modern PDF & Image Tools</title>
+  <meta name="description" content="ToolMitra Pro is a premium modern PDF and image tools platform with conversion, compression, editing, security and image optimization tools.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="bg-orb orb-one"></div><div class="bg-orb orb-two"></div><div class="bg-orb orb-three"></div>
+<header class="nav">
+  <a class="brand" href="#">
+    <div class="logo">TM</div>
+    <div><b>ToolMitra</b><span>Professional PDF & Image Tools</span></div>
+  </a>
+  <nav>
+    <a href="#tools">Tools</a>
+    <a href="#features">Features</a>
+    <a href="#workflow">Workflow</a>
+    <a href="#faq">FAQ</a>
+  </nav>
+  <button class="themeBtn" onclick="toggleTheme()">🌙</button><button class="navBtn" onclick="document.querySelector('#tools').scrollIntoView({behavior:'smooth'})">Start Now</button>
+</header>
+
+<section class="hero">
+  <div class="heroText">
+    <p class="badge">⚡ Premium UI • Fast PDF Tools • Secure Workflow</p>
+    <h1>Next-generation PDF tools for daily work</h1>
+    <p class="sub">Convert, compress, edit, protect and optimize files with a clean premium dashboard, smart upload panels and instant download flow.</p>
+    <div class="search">
+      <input id="search" placeholder="Search tools: compress, merge, pdf to word..." oninput="filterTools()">
+      <button onclick="document.querySelector('#tools').scrollIntoView({behavior:'smooth'})">Explore Tools</button>
+    </div>
+    <div class="stats">
+      <span><b>30+</b> Pro Tools</span>
+      <span><b>Premium</b> Interface</span>
+      <span><b>Direct</b> Download</span>
+      <span><b>PDF + Image</b> Suite</span>
+    </div>
+    <div class="categoryChips">
+      <button class="active" onclick="setCategory('all',this)">All</button>
+      <button onclick="setCategory('pdf',this)">PDF</button>
+      <button onclick="setCategory('convert',this)">Convert</button>
+      <button onclick="setCategory('image',this)">Image</button>
+      <button onclick="setCategory('secure',this)">Secure</button>
+    </div>
+  </div>
+  <div class="heroPanel">
+    <div class="miniTop"><span></span><span></span><span></span></div>
+    <h3>Quick launch</h3><p class="panelSub">Most-used tools for fast file work.</p>
+    <button onclick="quickOpen('PDF to Word')">PDF to Word</button>
+    <button onclick="quickOpen('Compress PDF')">Compress PDF</button>
+    <button onclick="quickOpen('JPG to PDF')">JPG to PDF</button>
+    <button onclick="quickOpen('Merge PDF')">Merge PDF</button>
+  </div>
+</section>
+
+<main>
+  <section class="trustStrip"><span>✨ Modern Design</span><span>🔐 Secure Tools</span><span>📄 PDF Suite</span><span>🖼️ Image Suite</span><span>🚀 Fast Backend</span></section>
+
+  <section id="features" class="features">
+    <div><strong>Premium Tool Experience</strong><span class="featureIcon">✦</span><p>Clean modal screens, smart previews, drag & drop upload and professional processing progress.</p></div>
+    <div><strong>Optimized Backend</strong><span class="featureIcon">⚙</span><p>Flask API endpoints for PDF conversion, image compression and direct downloads.</p></div>
+    <div><strong>Production Ready Design</strong><span class="featureIcon">◆</span><p>Responsive layout, dark mode, polished cards, clear status messages and easy deployment structure.</p></div>
+  </section>
+
+  <section id="tools" class="sectionHead">
+    <p class="eyebrow">Tool Collection</p>
+    <h2>Choose a professional tool</h2>
+    <p class="muted">A modern tools dashboard with clean cards, category filters, professional modals and direct output downloads.</p>
+    <div class="grid" id="toolGrid"></div>
+  </section>
+
+
+  <section id="workflow" class="workflow">
+    <p class="eyebrow">How it works</p>
+    <h2>Simple 3-step workflow</h2>
+    <div class="workflowGrid">
+      <div><b>1</b><h3>Choose a tool</h3><p>Search or select PDF/Image tool from professional dashboard.</p></div>
+      <div><b>2</b><h3>Upload & set options</h3><p>Choose quality, format, page range or target size.</p></div>
+      <div><b>3</b><h3>Process & download</h3><p>Progress popup shows each step and downloads output automatically.</p></div>
+    </div>
+  </section>
+
+  <section id="faq" class="faq">
+    <p class="eyebrow">FAQ</p>
+    <h2>Frequently Asked Questions</h2>
+    <details open><summary>Is ToolMitra free?</summary><p>Yes, ToolMitra is designed as a free PDF tools platform.</p></details>
+    <details><summary>Do I need to create an account?</summary><p>No, users can use tools directly without signup.</p></details>
+    <details><summary>Can I add more tools later?</summary><p>Yes, the frontend and Python backend structure is easy to extend.</p></details>
+  </section>
+</main>
+
+<section class="ctaBand"><div><p class="eyebrow">ToolMitra Pro</p><h2>Ready for hosting with a modern premium look</h2><p>Responsive design, polished cards, dark mode support and professional upload experience included.</p></div><button onclick="document.querySelector('#tools').scrollIntoView({behavior:'smooth'})">Explore tools</button></section>
+
+<footer>
+  <div><b>ToolMitra</b><span>Free PDF Tools Platform</span></div>
+  <p>© ToolMitra. Professional PDF & image tools platform.</p>
+</footer>
+
+<div id="modal" class="modal hidden">
+  <div class="box">
+    <button class="x" onclick="closeModal()">×</button>
+    <p class="modalBadge">ToolMitra PDF Tool</p>
+    <h2 id="modalTitle"></h2>
+    <p id="modalDesc"></p>
+    <form id="toolForm">
+      <div id="inputs"></div>
+      <button class="primary" type="submit">Process & Download</button>
+    </form>
+    <p id="status"></p>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
