@@ -451,7 +451,12 @@ def image_compress():
 
             def find_best_quality(im):
                 # Returns (best_bytes, best_size) under the limit
-                lo, hi = 5, 100 # Allow up to 100 to increase size if needed
+                lo, hi = 5, 100 
+               
+if limit > os.path.getsize(imgp):
+    hi = 100
+else:
+    hi = 95
                 best_valid_bytes = None
                 best_valid_size = -1
                 for _ in range(12):
@@ -512,7 +517,9 @@ def image_compress():
                     best_b, best_s = find_best_quality(work)
                     if best_b:
                         out.write_bytes(best_b)
-                        break # Found a size under limit, we are done!
+                        # exact target ke aur close lane ki koshish
+if best_s >= limit * 0.92:
+    break
                     else:
                         save_image(work, 5, 256)
                 else:
@@ -523,17 +530,18 @@ def image_compress():
             # --- INCREASE SIZE IF UNDER LIMIT (Upscaling) ---
             # Agar user ne choti image dali aur bada KB manga hai (e.g., 50KB to 200KB)
             attempts = 0
-            while out.stat().st_size < limit * 0.85 and attempts < 5:
+            while out.stat().st_size < limit * 0.95 and attempts < 8:
+                
                 current_size = out.stat().st_size
                 if current_size == 0:
                     break
                 ratio = limit / max(current_size, 1)
                 # scale dimensions slightly up to add data
-                scale = min(1.3, (ratio ** 0.5) * 1.05)
+               scale = min(1.8, (ratio ** 0.5) * 1.15)
                 nw = max(100, int(work.width * scale))
                 nh = max(100, int(work.height * (nw / max(work.width, 1))))
                 
-                if nw > 5000 or nh > 5000: # safety limit to prevent memory crash
+               if nw > 8000 or nh > 8000: # safety limit to prevent memory crash
                     break
                     
                 work = work.resize((nw, nh), Image.LANCZOS)
