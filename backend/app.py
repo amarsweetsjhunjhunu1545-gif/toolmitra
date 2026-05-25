@@ -550,9 +550,9 @@ def image_compress():
         except Exception as e:
             # Original output return kar do, but backend crash na ho.
             print('image target compress warning:', str(e))
-```
 
-Bas is code ko paste karke save kar dijiye aur dobara 500KB ya 250KB target dekar check kijiye. Error puri tarah se solve ho chuki hai!
+
+
 @app.post('/api/add-watermark')
 def add_watermark():
     pdf, original = save_file('file')
