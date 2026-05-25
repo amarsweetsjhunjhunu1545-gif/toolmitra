@@ -437,7 +437,7 @@ def image_compress():
             im2 = prepare_png(im, colors=colors)
             im2.save(out, pil_fmt, optimize=True, compress_level=9)
 
-       # First save with requested settings.
+         # First save with requested settings.
     save_image(img, quality, 256)
 
     # Target size KB: iterative compression. PNG me quality ka concept nahi hota,
@@ -446,111 +446,80 @@ def image_compress():
         try:
             limit = max(5, int(float(target_kb_raw))) * 1024
             work = img.copy()
-            current_size = out.stat().st_size
 
-            if pil_fmt in ('JPEG','WEBP'):
-                # Full-range binary search: quality 5 to 95 for best match.
+            def find_best_quality(im):
+                # Returns (best_bytes, best_size) under the limit
                 lo, hi = 5, 95
-                best_q = quality
-                best_bytes = out.read_bytes()
-                best_diff = abs(current_size - limit)
-                for _ in range(16):
+                best_valid_bytes = None
+                best_valid_size = -1
+                for _ in range(12):
                     if lo > hi:
                         break
                     mid = (lo + hi) // 2
-                    save_image(work, mid, 256)
-                    size = out.stat().st_size
-                    diff = abs(size - limit)
-                    if size <= limit:
-                        # Under or at target — save as best candidate, try higher quality.
-                        if diff < best_diff or len(best_bytes) > limit:
-                            best_bytes = out.read_bytes()
-                            best_diff = diff
-                            best_q = mid
+                    save_image(im, mid, 256)
+                    s = out.stat().st_size
+                    if s <= limit:
+                        if s > best_valid_size:
+                            best_valid_bytes = out.read_bytes()
+                            best_valid_size = s
                         lo = mid + 1
                     else:
-                        # Over target — try lower quality.
-                        if diff < best_diff and len(best_bytes) > limit:
-                            best_bytes = out.read_bytes()
-                            best_diff = diff
-                            best_q = mid
                         hi = mid - 1
-                out.write_bytes(best_bytes)
+                return best_valid_bytes, best_valid_size
 
+            if pil_fmt in ('JPEG','WEBP'):
+                best_b, best_s = find_best_quality(work)
+                if best_b:
+                    out.write_bytes(best_b)
+                else:
+                    # Lowest quality (5) is still over limit. Save at 5 to prepare for resize.
+                    save_image(work, 5, 256)
             else:
-                # PNG: reduce colors first.
-                best_bytes = out.read_bytes()
+                best_b = None
+                best_s = -1
                 for colors in [256,192,128,96,64,48,32,24,16]:
                     save_image(work, quality, colors)
-                    size = out.stat().st_size
-                    if size <= limit:
-                        best_bytes = out.read_bytes()
+                    s = out.stat().st_size
+                    if s <= limit:
+                        if s > best_s:
+                            best_b = out.read_bytes()
+                            best_s = s
                         break
-                    if size < len(best_bytes):
-                        best_bytes = out.read_bytes()
-                out.write_bytes(best_bytes)
+                if best_b:
+                    out.write_bytes(best_b)
 
-            # Agar ab bhi target se bada hai to dimensions reduce karo.
-            # Aggressive scaling with proper convergence to hit target KB exactly.
             attempts = 0
-            while out.stat().st_size > limit and work.width > 100 and work.height > 100 and attempts < 40:
+            while out.stat().st_size > limit and work.width > 100 and work.height > 100 and attempts < 30:
                 current_size = out.stat().st_size
-                # Calculate scale factor based on how far we are from target.
-                ratio = (limit / max(current_size, 1)) ** 0.55
-                scale = max(0.55, min(0.90, ratio))
+                # Reduce area based on the ratio to hit limit. Use 0.98 to be slightly safe.
+                ratio = limit / max(current_size, 1)
+                scale = max(0.60, min(0.95, (ratio ** 0.5) * 0.98))
+                
                 nw = max(100, int(work.width * scale))
                 nh = max(100, int(work.height * (nw / work.width)))
-                # Ensure dimensions always decrease to avoid infinite loop.
-                if nw >= work.width:
-                    nw = max(100, int(work.width * 0.75))
+                if nw >= work.width or nh >= work.height:
+                    nw = max(100, int(work.width * 0.90))
                     nh = max(100, int(work.height * (nw / work.width)))
                 if nw >= work.width or nh >= work.height:
                     break
+                    
                 work = work.resize((nw, nh), Image.LANCZOS)
+                
                 if pil_fmt in ('JPEG','WEBP'):
-                    # After resize, binary search quality again for this new size.
-                    r_lo, r_hi = 5, 92
-                    r_best = None
-                    for _ in range(10):
-                        if r_lo > r_hi:
-                            break
-                        r_mid = (r_lo + r_hi) // 2
-                        save_image(work, r_mid, 256)
-                        r_size = out.stat().st_size
-                        if r_size <= limit:
-                            r_best = out.read_bytes()
-                            r_lo = r_mid + 1
-                        else:
-                            r_hi = r_mid - 1
-                    if r_best:
-                        out.write_bytes(r_best)
+                    best_b, best_s = find_best_quality(work)
+                    if best_b:
+                        out.write_bytes(best_b)
+                        break # Found a size under limit, we are done!
                     else:
                         save_image(work, 5, 256)
                 else:
                     save_image(work, quality, 32)
+                
                 attempts += 1
-                # Stop if we hit target.
-                if out.stat().st_size <= limit:
-                    # One more try: increase quality slightly to get closer to target without exceeding.
-                    if pil_fmt in ('JPEG','WEBP'):
-                        final_lo, final_hi = 5, 95
-                        final_best = out.read_bytes()
-                        for _ in range(12):
-                            if final_lo > final_hi:
-                                break
-                            final_mid = (final_lo + final_hi) // 2
-                            save_image(work, final_mid, 256)
-                            if out.stat().st_size <= limit:
-                                final_best = out.read_bytes()
-                                final_lo = final_mid + 1
-                            else:
-                                final_hi = final_mid - 1
-                        out.write_bytes(final_best)
-                    break
+                
         except Exception as e:
             # Original output return kar do, but backend crash na ho.
-            print('image target compress warning:', e)
-    return send(out, out.name)
+            print('image target compress warning:', e)    return send(out, out.name)
 
 @app.post('/api/add-watermark')
 def add_watermark():
