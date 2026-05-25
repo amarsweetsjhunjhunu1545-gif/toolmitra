@@ -71,7 +71,7 @@ CORS(app, resources={r"/*": {
     "origins": "*",
     "methods": ["GET", "POST", "OPTIONS"],
     "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
-    "expose_headers": ["Content-Disposition"],
+    "expose_headers": ["Content-Disposition", "X-Original-Size", "X-Compressed-Size", "X-Target-Size", "X-Target-Reached", "X-Exact-Target"],
     "supports_credentials": False,
 }})
 app.config['MAX_CONTENT_LENGTH'] = 150 * 1024 * 1024
@@ -83,7 +83,7 @@ def handle_preflight():
         resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
         resp.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
         resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
-        resp.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
+        resp.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, X-Original-Size, X-Compressed-Size, X-Target-Size, X-Target-Reached, X-Exact-Target'
         return resp
 
 @app.after_request
@@ -92,7 +92,7 @@ def add_cors_headers(response):
     response.headers['Vary'] = 'Origin'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
-    response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
+    response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, X-Original-Size, X-Compressed-Size, X-Target-Size, X-Target-Reached, X-Exact-Target'
     response.headers['Cache-Control'] = response.headers.get('Cache-Control', 'no-store')
     return response
 
@@ -673,9 +673,12 @@ def compress_pdf():
     if not candidates:
         return jsonify(error='Compression failed. Run: pip install pypdfium2 pillow reportlab pypdf'), 500
 
+    exact_match = False
+    target_reached = False
+
     if target_bytes:
         under = [x for x in candidates if os.path.getsize(x) <= target_bytes]
-        # choose closest under target; otherwise choose smallest available
+        # Choose closest file that is under target. If every candidate is bigger, choose smallest possible.
         best = max(under, key=lambda x: os.path.getsize(x)) if under else min(candidates, key=lambda x: os.path.getsize(x))
     else:
         best = min(candidates, key=lambda x: os.path.getsize(x))
@@ -683,11 +686,29 @@ def compress_pdf():
     final = OUTPUTS / (Path(original).stem + '_compressed.pdf')
     final.write_bytes(Path(best).read_bytes())
 
+    # If target KB is possible, make the download EXACTLY that many bytes.
+    # We only pad when the compressed PDF is smaller than target; PDF readers normally ignore trailing comment bytes.
+    if target_bytes:
+        current_size = os.path.getsize(final)
+        if current_size <= target_bytes:
+            target_reached = True
+            padding_needed = target_bytes - current_size
+            if padding_needed > 0:
+                with open(final, 'ab') as fp:
+                    if padding_needed >= 2:
+                        fp.write(b'\n%')
+                        fp.write(b'0' * (padding_needed - 2))
+                    else:
+                        fp.write(b'0')
+            exact_match = os.path.getsize(final) == target_bytes
+
     response = send(final, final.name)
     response.headers['X-Original-Size'] = str(original_size)
     response.headers['X-Compressed-Size'] = str(os.path.getsize(final))
     if target_bytes:
         response.headers['X-Target-Size'] = str(target_bytes)
+        response.headers['X-Target-Reached'] = 'yes' if target_reached else 'no'
+        response.headers['X-Exact-Target'] = 'yes' if exact_match else 'no'
     return response
 
 
