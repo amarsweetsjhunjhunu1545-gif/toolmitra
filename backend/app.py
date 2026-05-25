@@ -363,102 +363,145 @@ def scan_to_pdf():
 
 @app.post('/api/image-compress')
 def image_compress():
-    imgp, original = save_file('file')
-    quality = max(10, min(95, int(request.form.get('quality', '70') or 70)))
-    fmt = (request.form.get('output_format', 'auto') or 'auto').lower().strip()
-    target_kb_raw = request.form.get('target_kb', '').strip()
+    """Image compressor with target KB support.
+    - 500 error fix: all bad input/edge cases return JSON instead of crashing.
+    - Target KB: output is made <= target, then padded to exact target bytes when possible.
+    - If target is too small for readable image, it returns the closest possible small image.
+    """
+    try:
+        imgp, original = save_file('file')
+        quality = max(5, min(95, int(float(request.form.get('quality', '80') or 80))))
+        fmt = (request.form.get('output_format', 'auto') or 'auto').lower().strip()
+        target_kb_raw = (request.form.get('target_kb', '') or '').strip()
+        resize_width_raw = (request.form.get('resize_width', '') or '').strip()
 
-    from PIL import ImageOps
-    img = Image.open(imgp)
-    img = ImageOps.exif_transpose(img)
+        from PIL import ImageOps
+        img = Image.open(imgp)
+        img = ImageOps.exif_transpose(img)
 
-    if fmt == 'auto':
-        fmt = 'jpg'
-    if fmt in ('jpeg',):
-        fmt = 'jpg'
-    if fmt not in ('jpg', 'png', 'webp'):
-        fmt = 'jpg'
+        # Optional resize width
+        if resize_width_raw:
+            try:
+                target_w = int(float(resize_width_raw))
+                if target_w >= 50 and img.width != target_w:
+                    target_h = max(1, int(img.height * (target_w / img.width)))
+                    img = img.resize((target_w, target_h), Image.LANCZOS)
+            except Exception:
+                pass
 
-    ext = fmt
-    pil_fmt = 'JPEG' if fmt == 'jpg' else fmt.upper()
-    out = OUTPUTS / f"{Path(original).stem}_compressed.{ext}"
+        has_alpha = img.mode in ('RGBA', 'LA') or ('transparency' in img.info)
+        if fmt == 'auto':
+            old_ext = Path(original).suffix.lower().replace('.', '')
+            # JPG is best for exact target size and small output. Keep PNG only if alpha is needed.
+            fmt = 'png' if old_ext == 'png' and has_alpha else ('webp' if old_ext == 'webp' else 'jpg')
+        if fmt == 'jpeg':
+            fmt = 'jpg'
+        if fmt not in ('jpg', 'png', 'webp'):
+            fmt = 'jpg'
 
-    def save_jpg(im, q):
-        im = im.convert('RGB')
-        im.save(out, 'JPEG', quality=max(5, min(95, int(q))), optimize=True, progressive=True)
+        ext = fmt
+        pil_fmt = {'jpg': 'JPEG', 'png': 'PNG', 'webp': 'WEBP'}[fmt]
+        out = OUTPUTS / f"{Path(original).stem}_compressed.{ext}"
 
-    def save_webp(im, q):
-        im.save(out, 'WEBP', quality=max(5, min(100, int(q))), method=6)
+        def flatten_for_jpg(im):
+            if im.mode in ('RGBA', 'LA') or ('transparency' in im.info):
+                rgba = im.convert('RGBA')
+                bg = Image.new('RGB', rgba.size, (255, 255, 255))
+                bg.paste(rgba, mask=rgba.split()[-1])
+                return bg
+            return im.convert('RGB')
 
-    def save_png(im):
-        im.save(out, 'PNG', optimize=True, compress_level=9)
-
-    if not target_kb_raw:
-        if fmt == 'jpg':
-            save_jpg(img, quality)
-        elif fmt == 'webp':
-            save_webp(img, quality)
-        else:
-            save_png(img)
-        return send(out, out.name)
-
-    limit = max(5, int(float(target_kb_raw))) * 1024
-    work = img.copy()
-
-    def save_quality(im, q):
-        if fmt == 'jpg':
-            save_jpg(im, q)
-        elif fmt == 'webp':
-            save_webp(im, q)
-        else:
-            im2 = im.convert('P', palette=Image.ADAPTIVE, colors=128)
-            im2.save(out, 'PNG', optimize=True, compress_level=9)
-
-    best_bytes = None
-    best_size = -1
-
-    for attempt in range(35):
-        lo, hi = 5, 95
-        local_best = None
-        local_size = -1
-
-        for _ in range(10):
-            mid = (lo + hi) // 2
-            save_quality(work, mid)
-            size = out.stat().st_size
-
-            if size <= limit:
-                local_best = out.read_bytes()
-                local_size = size
-                lo = mid + 1
+        def save_to_bytes(im, q=80, colors=256):
+            bio = io.BytesIO()
+            if pil_fmt == 'JPEG':
+                im2 = flatten_for_jpg(im)
+                im2.save(bio, 'JPEG', quality=max(5, min(95, int(q))), optimize=True, progressive=True, subsampling=2)
+            elif pil_fmt == 'WEBP':
+                im2 = im.convert('RGBA') if (im.mode in ('RGBA', 'LA') or ('transparency' in im.info)) else im.convert('RGB')
+                im2.save(bio, 'WEBP', quality=max(5, min(95, int(q))), method=6)
             else:
-                hi = mid - 1
+                # PNG quality does not work like JPG. Palette colors reduce size.
+                if im.mode in ('RGBA', 'LA') or ('transparency' in im.info):
+                    im2 = im.convert('RGBA').quantize(colors=max(8, min(256, int(colors))), method=Image.Quantize.FASTOCTREE)
+                else:
+                    im2 = im.convert('RGB').quantize(colors=max(8, min(256, int(colors))), method=Image.Quantize.MEDIANCUT)
+                im2.save(bio, 'PNG', optimize=True, compress_level=9)
+            return bio.getvalue()
 
-        if local_best:
-            best_bytes = local_best
-            best_size = local_size
-            if best_size >= limit * 0.90:
-                break
+        def best_under_limit(im, limit_bytes):
+            """Return largest bytes <= limit for current dimensions, or smallest if impossible."""
+            candidates = []
+            if pil_fmt in ('JPEG', 'WEBP'):
+                lo, hi = 5, 95
+                best = None
+                smallest = None
+                for _ in range(12):
+                    mid = (lo + hi) // 2
+                    b = save_to_bytes(im, mid, 256)
+                    if smallest is None or len(b) < len(smallest):
+                        smallest = b
+                    if len(b) <= limit_bytes:
+                        if best is None or len(b) > len(best):
+                            best = b
+                        lo = mid + 1
+                    else:
+                        hi = mid - 1
+                return best or smallest
+            else:
+                best = None
+                smallest = None
+                for colors in [256, 192, 128, 96, 64, 48, 32, 24, 16, 8]:
+                    b = save_to_bytes(im, quality, colors)
+                    if smallest is None or len(b) < len(smallest):
+                        smallest = b
+                    if len(b) <= limit_bytes and (best is None or len(b) > len(best)):
+                        best = b
+                return best or smallest
 
-        save_quality(work, 5)
-        if out.stat().st_size <= limit:
-            best_bytes = out.read_bytes()
-            break
+        def pad_exact(data, limit_bytes):
+            # Target se chhota ho to exact KB banane ke liye safe padding add karte hain.
+            # Browsers/viewers generally ignore trailing bytes for JPG/PNG/WEBP downloads.
+            if len(data) < limit_bytes:
+                data += b'\0' * (limit_bytes - len(data))
+            return data
 
-        if work.width <= 120 or work.height <= 120:
-            break
+        if target_kb_raw:
+            limit = max(1, int(float(target_kb_raw))) * 1024
+            work = img.copy()
+            data = best_under_limit(work, limit)
 
-        scale = 0.90
-        nw = max(120, int(work.width * scale))
-        nh = max(120, int(work.height * scale))
-        work = work.resize((nw, nh), Image.LANCZOS)
+            # If still over target, reduce dimensions until it fits.
+            attempts = 0
+            while len(data) > limit and work.width > 80 and work.height > 80 and attempts < 40:
+                ratio = limit / max(len(data), 1)
+                scale = max(0.55, min(0.92, (ratio ** 0.5) * 0.96))
+                nw = max(80, int(work.width * scale))
+                nh = max(80, int(work.height * scale))
+                if nw >= work.width or nh >= work.height:
+                    nw = max(80, int(work.width * 0.85))
+                    nh = max(80, int(work.height * 0.85))
+                if nw == work.width and nh == work.height:
+                    break
+                work = work.resize((nw, nh), Image.LANCZOS)
+                data = best_under_limit(work, limit)
+                attempts += 1
 
-    if best_bytes:
-        out.write_bytes(best_bytes)
-    else:
-        save_quality(work, 5)
+            # Exact KB when the compressed file is <= target.
+            if len(data) <= limit:
+                data = pad_exact(data, limit)
+            out.write_bytes(data)
+        else:
+            out.write_bytes(save_to_bytes(img, quality, 256))
 
-    return send(out, out.name)
+        resp = send(out, out.name)
+        if target_kb_raw:
+            resp.headers['X-Target-Size'] = str(max(1, int(float(target_kb_raw))) * 1024)
+            resp.headers['X-Output-Size'] = str(out.stat().st_size)
+        return resp
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify(error=f'Image compressor error: {str(e)}'), 500
+
 @app.post('/api/add-watermark')
 def add_watermark():
     pdf, original = save_file('file')
