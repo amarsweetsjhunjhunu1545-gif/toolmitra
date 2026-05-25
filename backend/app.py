@@ -437,7 +437,7 @@ def image_compress():
             im2 = prepare_png(im, colors=colors)
             im2.save(out, pil_fmt, optimize=True, compress_level=9)
 
-         # First save with requested settings.
+            # First save with requested settings.
     save_image(img, quality, 256)
 
     # Target size KB: iterative compression. PNG me quality ka concept nahi hota,
@@ -449,7 +449,7 @@ def image_compress():
 
             def find_best_quality(im):
                 # Returns (best_bytes, best_size) under the limit
-                lo, hi = 5, 95
+                lo, hi = 5, 100 # Allow up to 100 to increase size if needed
                 best_valid_bytes = None
                 best_valid_size = -1
                 for _ in range(12):
@@ -488,6 +488,7 @@ def image_compress():
                 if best_b:
                     out.write_bytes(best_b)
 
+            # --- REDUCE SIZE IF OVER LIMIT ---
             attempts = 0
             while out.stat().st_size > limit and work.width > 100 and work.height > 100 and attempts < 30:
                 current_size = out.stat().st_size
@@ -517,10 +518,33 @@ def image_compress():
                 
                 attempts += 1
                 
+            # --- INCREASE SIZE IF UNDER LIMIT (Upscaling) ---
+            # Agar user ne choti image dali aur bada KB manga hai (e.g., 50KB to 200KB)
+            attempts = 0
+            while out.stat().st_size < limit * 0.85 and attempts < 5:
+                current_size = out.stat().st_size
+                ratio = limit / max(current_size, 1)
+                # scale dimensions slightly up to add data
+                scale = min(1.3, (ratio ** 0.5) * 1.05)
+                nw = int(work.width * scale)
+                nh = int(work.height * (nw / work.width))
+                if nw > 4000 or nh > 4000: # safety limit to prevent memory crash
+                    break
+                    
+                work = work.resize((nw, nh), Image.BICUBIC)
+                
+                if pil_fmt in ('JPEG','WEBP'):
+                    best_b, best_s = find_best_quality(work)
+                    if best_b:
+                        out.write_bytes(best_b)
+                else:
+                    save_image(work, 100, 256)
+                    
+                attempts += 1
+                
         except Exception as e:
             # Original output return kar do, but backend crash na ho.
-            print('image target compress warning:', e)    return send(out, out.name)
-
+            print('image target compress warning:', e)
 @app.post('/api/add-watermark')
 def add_watermark():
     pdf, original = save_file('file')
