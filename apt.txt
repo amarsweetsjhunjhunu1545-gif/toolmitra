@@ -1,6 +1,0 @@
-qpdf
-ghostscript
-
-fonts-noto-core
-fonts-noto-extra
-fonts-lohit-deva
