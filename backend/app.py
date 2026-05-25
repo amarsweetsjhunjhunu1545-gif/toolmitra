@@ -437,7 +437,7 @@ def image_compress():
             im2 = prepare_png(im, colors=colors)
             im2.save(out, pil_fmt, optimize=True, compress_level=9)
 
-    # First save with requested settings.
+       # First save with requested settings.
     save_image(img, quality, 256)
 
     # Target size KB: iterative compression. PNG me quality ka concept nahi hota,
@@ -446,20 +446,35 @@ def image_compress():
         try:
             limit = max(5, int(float(target_kb_raw))) * 1024
             work = img.copy()
+            current_size = out.stat().st_size
 
             if pil_fmt in ('JPEG','WEBP'):
-                # Binary search best quality close to target.
-                lo, hi = 10, quality
+                # Full-range binary search: quality 5 to 95 for best match.
+                lo, hi = 5, 95
+                best_q = quality
                 best_bytes = out.read_bytes()
-                for _ in range(10):
+                best_diff = abs(current_size - limit)
+                for _ in range(16):
+                    if lo > hi:
+                        break
                     mid = (lo + hi) // 2
                     save_image(work, mid, 256)
                     size = out.stat().st_size
-                    if size > limit:
-                        hi = mid - 1
-                    else:
-                        best_bytes = out.read_bytes()
+                    diff = abs(size - limit)
+                    if size <= limit:
+                        # Under or at target — save as best candidate, try higher quality.
+                        if diff < best_diff or len(best_bytes) > limit:
+                            best_bytes = out.read_bytes()
+                            best_diff = diff
+                            best_q = mid
                         lo = mid + 1
+                    else:
+                        # Over target — try lower quality.
+                        if diff < best_diff and len(best_bytes) > limit:
+                            best_bytes = out.read_bytes()
+                            best_diff = diff
+                            best_q = mid
+                        hi = mid - 1
                 out.write_bytes(best_bytes)
 
             else:
@@ -476,26 +491,65 @@ def image_compress():
                 out.write_bytes(best_bytes)
 
             # Agar ab bhi target se bada hai to dimensions reduce karo.
-            # Target size exact nahi hota, lekin close/below lane ki full koshish.
+            # Aggressive scaling with proper convergence to hit target KB exactly.
             attempts = 0
-            while out.stat().st_size > limit and work.width > 160 and work.height > 160 and attempts < 30:
-                ratio = (limit / max(out.stat().st_size, 1)) ** 0.5
-                scale = max(0.72, min(0.92, ratio * 0.98))
-                nw = max(160, int(work.width * scale))
-                nh = max(160, int(work.height * (nw / work.width)))
+            while out.stat().st_size > limit and work.width > 100 and work.height > 100 and attempts < 40:
+                current_size = out.stat().st_size
+                # Calculate scale factor based on how far we are from target.
+                ratio = (limit / max(current_size, 1)) ** 0.55
+                scale = max(0.55, min(0.90, ratio))
+                nw = max(100, int(work.width * scale))
+                nh = max(100, int(work.height * (nw / work.width)))
+                # Ensure dimensions always decrease to avoid infinite loop.
                 if nw >= work.width:
-                    nw = int(work.width * 0.86)
-                    nh = int(work.height * (nw / work.width))
+                    nw = max(100, int(work.width * 0.75))
+                    nh = max(100, int(work.height * (nw / work.width)))
+                if nw >= work.width or nh >= work.height:
+                    break
                 work = work.resize((nw, nh), Image.LANCZOS)
                 if pil_fmt in ('JPEG','WEBP'):
-                    save_image(work, 75 if pil_fmt=='JPEG' else 80, 256)
+                    # After resize, binary search quality again for this new size.
+                    r_lo, r_hi = 5, 92
+                    r_best = None
+                    for _ in range(10):
+                        if r_lo > r_hi:
+                            break
+                        r_mid = (r_lo + r_hi) // 2
+                        save_image(work, r_mid, 256)
+                        r_size = out.stat().st_size
+                        if r_size <= limit:
+                            r_best = out.read_bytes()
+                            r_lo = r_mid + 1
+                        else:
+                            r_hi = r_mid - 1
+                    if r_best:
+                        out.write_bytes(r_best)
+                    else:
+                        save_image(work, 5, 256)
                 else:
-                    save_image(work, quality, 64)
+                    save_image(work, quality, 32)
                 attempts += 1
+                # Stop if we hit target.
+                if out.stat().st_size <= limit:
+                    # One more try: increase quality slightly to get closer to target without exceeding.
+                    if pil_fmt in ('JPEG','WEBP'):
+                        final_lo, final_hi = 5, 95
+                        final_best = out.read_bytes()
+                        for _ in range(12):
+                            if final_lo > final_hi:
+                                break
+                            final_mid = (final_lo + final_hi) // 2
+                            save_image(work, final_mid, 256)
+                            if out.stat().st_size <= limit:
+                                final_best = out.read_bytes()
+                                final_lo = final_mid + 1
+                            else:
+                                final_hi = final_mid - 1
+                        out.write_bytes(final_best)
+                    break
         except Exception as e:
             # Original output return kar do, but backend crash na ho.
             print('image target compress warning:', e)
-
     return send(out, out.name)
 
 @app.post('/api/add-watermark')
