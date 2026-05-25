@@ -437,11 +437,8 @@ def image_compress():
             im2 = prepare_png(im, colors=colors)
             im2.save(out, pil_fmt, optimize=True, compress_level=9)
 
-         Aapne jo code bheja hai, us poore block ki jagah bas ye niche diya gaya **naya, safe code** replace kar dijiye. Maine isme 500 Error wali sabhi bugs (`Image.BICUBIC` ko hatakar `Image.LANCZOS` kar diya hai aur zero-division error se bachne ke checks laga diye hain) fix kar di hain.
+        
 
-Apne purane code ko isse replace karein:
-
-```python
     # First save with requested settings.
     save_image(img, quality, 256)
 
