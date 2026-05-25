@@ -296,9 +296,15 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
     const disp=res.headers.get('content-disposition')||'';
     const m=disp.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
     if(m)name=decodeURIComponent(m[1].replace(/"/g,''));
-    await downloadBlobMobileFriendly(blob,name);
-    st.textContent='Done! File downloaded.';
-    finishProcessingBox(true,'Done! File downloaded.');
+       await downloadBlobMobileFriendly(blob,name);
+    if(isImage && blob.size){
+      const sizeKB = (blob.size/1024).toFixed(1);
+      st.textContent=`✅ Done! Compressed image: ${sizeKB} KB downloaded.`;
+      finishProcessingBox(true,`Done! Compressed image: ${sizeKB} KB`);
+    } else {
+      st.textContent='Done! File downloaded.';
+      finishProcessingBox(true,'Done! File downloaded.');
+    }
   }catch(err){
     st.textContent='Error: '+err.message;
     finishProcessingBox(false,'Error: '+err.message);
