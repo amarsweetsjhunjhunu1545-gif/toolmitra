@@ -144,7 +144,6 @@ def home():
 def health():
     return jsonify(status='ok', backend='ToolMitra', pdf2docx=bool(Converter), tesseract=bool(pytesseract))
 
-@app.route('/api/pdf-to-word', methods=['POST', 'OPTIONS'])
 def pdf_to_word():
     """Reliable PDF to Word converter for mobile/PC/tablet.
     It uses fast text extraction, so many-page PDFs do not crash Render.
