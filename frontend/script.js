@@ -73,9 +73,8 @@ const tools = [
  {t:'Delete Pages',e:'/api/delete-pages',d:'Remove unwanted pages.',i:'🗑',type:'single',accept:'.pdf',extra:[['pages','Pages to delete e.g. 2,4-5']]},
  {t:'Extract Pages',e:'/api/extract-pages',d:'Save selected pages as a new PDF.',i:'📌',type:'single',accept:'.pdf',extra:[['pages','Pages e.g. 1-3,5','1']]},
  {t:'Extract PDF Text',e:'/api/extract-text',d:'Download text from PDF.',i:'TXT',type:'single',accept:'.pdf'},
- {t:'Image Compressor',e:'/api/image-compress',d:'Image upload karo, target size KB enter karo aur compressed image download karo.',i:'⚡',type:'image',accept:'image/*',btn:'Compress to KB & Download',extra:[['target_kb','Target size in KB e.g. 100','']]},
- {t:'QR Generator',e:'#client-qr',d:'Advanced QR: link, UPI/PhonePe, WhatsApp, WiFi, contact, email, SMS, location. PNG/JPG/SVG/PDF download.',i:'QR',type:'client'},
-
+ {t:'Image Compressor',e:'/api/image-compress',d:'Image upload karo, target KB set karo aur JPG/PNG me compressed image download karo.',i:'⚡',type:'image',accept:'image/*',btn:'Compress / Convert & Download',extra:[['target_kb','Target size in KB e.g. 100',''],['output_format','Output format: auto / jpg / png','auto']]},
+ {t:'QR Generator',e:'#client-qr',d:'Advanced QR: link, UPI/PhonePe, WhatsApp, WiFi, contact, email, SMS, location. PNG/JPG/SVG/PDF download.',i:'QR',type:'client'}
 ];
 let current=window.currentTool||null;
 let activeCategory='all';
