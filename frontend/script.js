@@ -75,7 +75,7 @@ const tools = [
  {t:'Extract PDF Text',e:'/api/extract-text',d:'Download text from PDF.',i:'TXT',type:'single',accept:'.pdf'},
  {t:'Image Compressor',e:'/api/image-compress',d:'Image upload karo, target size KB enter karo aur compressed image download karo.',i:'⚡',type:'image',accept:'image/*',btn:'Compress to KB & Download',extra:[['target_kb','Target size in KB e.g. 100','']]},
  {t:'QR Generator',e:'#client-qr',d:'Advanced QR: link, UPI/PhonePe, WhatsApp, WiFi, contact, email, SMS, location. PNG/JPG/SVG/PDF download.',i:'QR',type:'client'},
- {t:'Camera to PDF',e:'#client-camera-pdf',d:'Camera se photo click karke clean PDF banao. PDF me sirf clicked photo aayegi, extra screen nahi.',i:'📷',type:'client'}
+
 ];
 let current=window.currentTool||null;
 let activeCategory='all';
