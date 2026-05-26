@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Advanced QR Generator Free Online | OrbixaPDFTool</title>
+  <meta name="description" content="Advanced QR generator for website links, PhonePe/UPI payment, WhatsApp chat, WiFi, contact, email, SMS, location and custom text. Download PNG, JPG, SVG or PDF.">
+  <link rel="icon" href="favicon.ico" sizes="any">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    .qr-wrap{max-width:1120px;margin:34px auto;padding:0 18px}.qr-hero{text-align:center;margin-bottom:22px}.qr-panel{display:grid;grid-template-columns:1.25fr .75fr;gap:20px;align-items:start}.qr-card{background:var(--bg-card);border:1px solid var(--border-color);box-shadow:0 14px 38px var(--shadow-color);border-radius:22px;padding:22px}.qr-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 20px}.qr-tab{border:1px solid var(--border-color);background:var(--bg);color:var(--text);border-radius:999px;padding:10px 14px;cursor:pointer;font-weight:800}.qr-tab.active{background:linear-gradient(135deg,#6366f1,#06b6d4);color:#fff;border-color:transparent}.qr-form{display:grid;grid-template-columns:1fr 1fr;gap:14px}.qr-form .full{grid-column:1/-1}.qr-form label{font-weight:800;font-size:13px;margin-bottom:6px;display:block}.qr-form input,.qr-form textarea,.qr-form select{width:100%;padding:13px 14px;border-radius:13px;border:1px solid var(--border-color);background:var(--bg);color:var(--text);font-size:15px;outline:none}.qr-form textarea{min-height:112px;resize:vertical}.qr-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}.qr-preview{position:sticky;top:18px;text-align:center}.qr-frame{background:#fff;padding:18px;border-radius:20px;width:max-content;max-width:100%;margin:0 auto 12px;border:1px solid #e5e7eb}.qr-frame canvas,.qr-frame img{max-width:100%;height:auto}.payload-box{background:var(--bg);border:1px dashed var(--border-color);border-radius:14px;padding:12px;margin-top:14px;word-break:break-all;font-size:13px;color:var(--muted)}.download-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.mini-note{font-size:13px;color:var(--muted);line-height:1.5}.color-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}.color-row input[type=color]{height:46px;padding:5px}.hidden-mode{display:none!important}@media(max-width:860px){.qr-panel{grid-template-columns:1fr}.qr-form{grid-template-columns:1fr}.qr-preview{position:static}.qr-actions,.download-grid,.color-row{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="index.html" style="text-decoration:none"><div class="manual-logo"><div class="brand-text-container"><div class="brand-title">ORBIXA</div><div class="brand-sub">PDF</div></div></div></a>
+  <nav><a href="index.html#tools">Tools</a><a href="index.html#faq">FAQ</a></nav>
+  <button class="navBtn" onclick="location.href='index.html#tools'">All Tools</button>
+</header>
+<main class="qr-wrap">
+  <section class="qr-hero">
+    <p class="eyebrow">Advanced Free Tool</p>
+    <h1>Advanced QR Generator</h1>
+    <p class="muted">Website link, PhonePe/UPI payment, WhatsApp, Wi‑Fi, Contact, Email, SMS, Location aur custom text ka professional QR banao.</p>
+  </section>
+  <section class="qr-panel">
+    <div class="qr-card">
+      <h2>QR Type Select Karo</h2>
+      <div class="qr-tabs" id="qrTabs">
+        <button class="qr-tab active" data-type="url">🔗 Link</button>
+        <button class="qr-tab" data-type="upi">💳 UPI / PhonePe</button>
+        <button class="qr-tab" data-type="whatsapp">🟢 WhatsApp</button>
+        <button class="qr-tab" data-type="wifi">📶 Wi‑Fi</button>
+        <button class="qr-tab" data-type="contact">👤 Contact</button>
+        <button class="qr-tab" data-type="email">✉️ Email</button>
+        <button class="qr-tab" data-type="sms">💬 SMS</button>
+        <button class="qr-tab" data-type="location">📍 Location</button>
+        <button class="qr-tab" data-type="text">📝 Text</button>
+      </div>
+
+      <div class="qr-form">
+        <div class="full mode mode-url"><label>Website / Link</label><input id="urlInput" placeholder="https://orbixapdftool.in/" value="https://orbixapdftool.in/"></div>
+
+        <div class="mode mode-upi"><label>UPI ID / VPA</label><input id="upiId" placeholder="example@paytm / mobile@ybl"></div>
+        <div class="mode mode-upi"><label>Name</label><input id="upiName" placeholder="Amar Sweets"></div>
+        <div class="mode mode-upi"><label>Amount ₹ (optional)</label><input id="upiAmount" type="number" min="0" step="0.01" placeholder="100"></div>
+        <div class="mode mode-upi"><label>Note (optional)</label><input id="upiNote" placeholder="Payment for order"></div>
+
+        <div class="mode mode-whatsapp"><label>WhatsApp Number with country code</label><input id="waNumber" placeholder="919876543210"></div>
+        <div class="mode mode-whatsapp"><label>Message</label><input id="waMsg" placeholder="Hello, I want to know more."></div>
+
+        <div class="mode mode-wifi"><label>Wi‑Fi Name / SSID</label><input id="wifiSsid" placeholder="My WiFi"></div>
+        <div class="mode mode-wifi"><label>Password</label><input id="wifiPass" placeholder="WiFi password"></div>
+        <div class="mode mode-wifi"><label>Security</label><select id="wifiType"><option>WPA</option><option>WEP</option><option>nopass</option></select></div>
+        <div class="mode mode-wifi"><label>Hidden Network?</label><select id="wifiHidden"><option value="false">No</option><option value="true">Yes</option></select></div>
+
+        <div class="mode mode-contact"><label>Full Name</label><input id="cName" placeholder="Rishabh Choudhary"></div>
+        <div class="mode mode-contact"><label>Phone</label><input id="cPhone" placeholder="9876543210"></div>
+        <div class="mode mode-contact"><label>Email</label><input id="cEmail" placeholder="name@example.com"></div>
+        <div class="mode mode-contact"><label>Company</label><input id="cCompany" placeholder="Orbixa"></div>
+        <div class="full mode mode-contact"><label>Website</label><input id="cWebsite" placeholder="https://example.com"></div>
+
+        <div class="mode mode-email"><label>Email To</label><input id="emailTo" placeholder="name@example.com"></div>
+        <div class="mode mode-email"><label>Subject</label><input id="emailSubject" placeholder="Hello"></div>
+        <div class="full mode mode-email"><label>Message</label><textarea id="emailBody" placeholder="Your email message"></textarea></div>
+
+        <div class="mode mode-sms"><label>Phone Number</label><input id="smsPhone" placeholder="9876543210"></div>
+        <div class="mode mode-sms"><label>Message</label><input id="smsMsg" placeholder="Your SMS message"></div>
+
+        <div class="mode mode-location"><label>Latitude</label><input id="lat" placeholder="28.1289"></div>
+        <div class="mode mode-location"><label>Longitude</label><input id="lng" placeholder="75.3995"></div>
+
+        <div class="full mode mode-text"><label>Text / Any Data</label><textarea id="textInput" placeholder="Type anything here..."></textarea></div>
+
+        <div class="full"><h3 style="margin:10px 0 0">Design Options</h3></div>
+        <div><label>QR Size</label><input id="qrSize" type="number" min="160" max="1200" value="360"></div>
+        <div><label>Error Correction</label><select id="qrLevel"><option value="H">High - Best for print</option><option value="Q">Quality</option><option value="M">Medium</option><option value="L">Low</option></select></div>
+        <div class="full color-row">
+          <div><label>QR Color</label><input id="darkColor" type="color" value="#111827"></div>
+          <div><label>Background</label><input id="lightColor" type="color" value="#ffffff"></div>
+          <div><label>File Name</label><input id="qrFile" value="orbixa-qr"></div>
+        </div>
+      </div>
+      <div class="qr-actions">
+        <button class="primary" onclick="makeQR()">Generate QR</button>
+        <button class="navBtn" onclick="copyPayload()">Copy QR Data</button>
+      </div>
+      <div class="payload-box" id="payloadBox">QR data yaha dikhega.</div>
+      <p class="mini-note">Tip: PhonePe, Google Pay, Paytm jaise UPI apps ke liye UPI ID डालो. WhatsApp QR scan karne par direct chat open hogi.</p>
+    </div>
+
+    <aside class="qr-card qr-preview">
+      <h2>Live Preview</h2>
+      <div id="qrBox" class="qr-frame"></div>
+      <p id="status" class="mini-note" style="font-weight:800"></p>
+      <div class="download-grid">
+        <button class="navBtn" onclick="downloadQR('png')">PNG</button>
+        <button class="navBtn" onclick="downloadQR('jpg')">JPG</button>
+        <button class="navBtn" onclick="downloadSVG()">SVG</button>
+        <button class="navBtn" onclick="downloadPDF()">PDF</button>
+      </div>
+    </aside>
+  </section>
+</main>
+<script>
+let currentType='url';
+let lastPayload='';
+const esc=s=>String(s||'').replace(/([\\;,:])/g,'\\$1');
+const cleanPhone=s=>String(s||'').replace(/[^0-9]/g,'');
+function modeShow(){document.querySelectorAll('.mode').forEach(x=>x.classList.add('hidden-mode'));document.querySelectorAll('.mode-'+currentType).forEach(x=>x.classList.remove('hidden-mode'));}
+document.querySelectorAll('.qr-tab').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('.qr-tab').forEach(b=>b.classList.remove('active'));btn.classList.add('active');currentType=btn.dataset.type;modeShow();makeQR();}));
+function buildPayload(){
+  const enc=encodeURIComponent;
+  if(currentType==='url'){let v=document.getElementById('urlInput').value.trim(); if(v && !/^https?:\/\//i.test(v)) v='https://'+v; return v;}
+  if(currentType==='upi'){
+    const pa=document.getElementById('upiId').value.trim(), pn=document.getElementById('upiName').value.trim(), am=document.getElementById('upiAmount').value.trim(), tn=document.getElementById('upiNote').value.trim();
+    let q=`upi://pay?pa=${enc(pa)}&pn=${enc(pn||'Payment')}&cu=INR`; if(am) q+=`&am=${enc(am)}`; if(tn) q+=`&tn=${enc(tn)}`; return q;
+  }
+  if(currentType==='whatsapp') return `https://wa.me/${cleanPhone(document.getElementById('waNumber').value)}?text=${enc(document.getElementById('waMsg').value.trim())}`;
+  if(currentType==='wifi') return `WIFI:T:${esc(document.getElementById('wifiType').value)};S:${esc(document.getElementById('wifiSsid').value)};P:${esc(document.getElementById('wifiPass').value)};H:${document.getElementById('wifiHidden').value};;`;
+  if(currentType==='contact') return `BEGIN:VCARD\nVERSION:3.0\nFN:${document.getElementById('cName').value.trim()}\nORG:${document.getElementById('cCompany').value.trim()}\nTEL:${document.getElementById('cPhone').value.trim()}\nEMAIL:${document.getElementById('cEmail').value.trim()}\nURL:${document.getElementById('cWebsite').value.trim()}\nEND:VCARD`;
+  if(currentType==='email') return `mailto:${document.getElementById('emailTo').value.trim()}?subject=${enc(document.getElementById('emailSubject').value.trim())}&body=${enc(document.getElementById('emailBody').value.trim())}`;
+  if(currentType==='sms') return `sms:${cleanPhone(document.getElementById('smsPhone').value)}?body=${enc(document.getElementById('smsMsg').value.trim())}`;
+  if(currentType==='location') return `geo:${document.getElementById('lat').value.trim()},${document.getElementById('lng').value.trim()}`;
+  return document.getElementById('textInput').value.trim();
+}
+function correctionLevel(){const v=document.getElementById('qrLevel').value;return QRCode.CorrectLevel[v] || QRCode.CorrectLevel.H;}
+function makeQR(){
+  const payload=buildPayload(); lastPayload=payload; document.getElementById('payloadBox').textContent=payload || 'QR data yaha dikhega.';
+  const status=document.getElementById('status'); if(!payload){status.textContent='Pehle required details enter karo.';return;}
+  const size=Math.max(160,Math.min(1200,parseInt(document.getElementById('qrSize').value)||360));
+  const box=document.getElementById('qrBox'); box.innerHTML='';
+  new QRCode(box,{text:payload,width:size,height:size,colorDark:document.getElementById('darkColor').value,colorLight:document.getElementById('lightColor').value,correctLevel:correctionLevel()});
+  status.textContent='QR ready hai. Download format select karo.';
+}
+function getCanvas(){const c=document.querySelector('#qrBox canvas'); if(c) return c; const img=document.querySelector('#qrBox img'); if(!img) return null; const cn=document.createElement('canvas'); cn.width=img.naturalWidth; cn.height=img.naturalHeight; cn.getContext('2d').drawImage(img,0,0); return cn;}
+function fileBase(){return (document.getElementById('qrFile').value||'orbixa-qr').replace(/[\\/:*?"<>|]+/g,'_').replace(/\.(png|jpg|jpeg|svg|pdf)$/i,'');}
+function downloadQR(type){const canvas=getCanvas(); if(!canvas){makeQR();return;} const a=document.createElement('a'); a.download=fileBase()+'.'+type; if(type==='jpg'){const temp=document.createElement('canvas');temp.width=canvas.width;temp.height=canvas.height;const ctx=temp.getContext('2d');ctx.fillStyle=document.getElementById('lightColor').value;ctx.fillRect(0,0,temp.width,temp.height);ctx.drawImage(canvas,0,0);a.href=temp.toDataURL('image/jpeg',0.95);} else a.href=canvas.toDataURL('image/png'); a.click();}
+function downloadSVG(){const canvas=getCanvas(); if(!canvas){makeQR();return;} const data=canvas.toDataURL('image/png'); const size=canvas.width; const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><image href="${data}" width="${size}" height="${size}"/></svg>`; const a=document.createElement('a'); a.download=fileBase()+'.svg'; a.href=URL.createObjectURL(new Blob([svg],{type:'image/svg+xml'})); a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
+function downloadPDF(){const canvas=getCanvas(); if(!canvas){makeQR();return;} const {jsPDF}=window.jspdf; const pdf=new jsPDF({unit:'mm',format:'a4'}); pdf.setFontSize(16); pdf.text('Orbixa QR Code',105,22,{align:'center'}); pdf.addImage(canvas.toDataURL('image/png'),'PNG',55,35,100,100); pdf.setFontSize(9); const lines=pdf.splitTextToSize(lastPayload,170); pdf.text(lines,20,150); pdf.save(fileBase()+'.pdf');}
+async function copyPayload(){if(!lastPayload) makeQR(); try{await navigator.clipboard.writeText(lastPayload); document.getElementById('status').textContent='QR data copied.';}catch(e){document.getElementById('status').textContent='Copy nahi hua, manually copy karo.';}}
+['input','change'].forEach(ev=>document.querySelectorAll('input,textarea,select').forEach(el=>el.addEventListener(ev,()=>makeQR())));
+modeShow(); makeQR();
+</script>
+</body>
+</html>
