@@ -336,3 +336,21 @@ const editor = {
   tool:'select', color:'#111827', size:24, stroke:3, history:[], currentFile:null
 };
 function libReady(){ return window.pdfjsLib && window.fabric && window.jspdf; }
+let deferredPrompt;
+
+window.addEventListener("beforeinstallprompt", function(e) {
+  e.preventDefault();
+  deferredPrompt = e;
+
+  const installBtn = document.getElementById("installAppBtn");
+  if (installBtn) {
+    installBtn.style.display = "block";
+  }
+});
+
+document.getElementById("installAppBtn")?.addEventListener("click", async function() {
+  if (deferredPrompt) {
+    deferredPrompt.prompt();
+    deferredPrompt = null;
+  }
+});
