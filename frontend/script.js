@@ -1,9 +1,7 @@
 // Backend API URL
 // Netlify par deployed frontend ke liye Render backend URL use hoga.
 // Local testing me http://127.0.0.1:5000 auto use hoga.
-const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:')
-  ? 'http://127.0.0.1:5000'
-  : 'https://toolmitra-api.onrender.com';
+const API = 'https://toolmitra-api.onrender.com';
 
 function safeFileName(name){
   return (name || 'orbixapdftool_download').replace(/[\\/:*?"<>|]+/g,'_').replace(/\s+/g,'_');
