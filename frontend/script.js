@@ -336,3 +336,4 @@ const editor = {
   tool:'select', color:'#111827', size:24, stroke:3, history:[], currentFile:null
 };
 function libReady(){ return window.pdfjsLib && window.fabric && window.jspdf; }
+
