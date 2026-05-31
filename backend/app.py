@@ -49,6 +49,11 @@ except Exception:
     Converter = None
 
 try:
+    from docxcompose.composer import Composer
+except Exception:
+    Composer = None
+
+try:
     import pypdfium2 as pdfium
 except Exception:
     pdfium = None
@@ -218,14 +223,52 @@ def pdf_to_word():
 
         # Main conversion: preserves layout, fonts, tables, images and spacing better
         # than simple text extraction.
-        cv = Converter(str(pdf))
-        try:
-            cv.convert(str(out), start=0, end=None, multi_processing=False)
-        except TypeError:
-            # Fallback if multi_processing arg is not supported in the installed version
-            cv.convert(str(out), start=0, end=None)
-        cv.close()
-        cv = None
+        # MEMORY FIX: If PDF is > 1 page, process page by page to avoid OOM on 512MB server.
+        total_pages = len(reader.pages)
+        
+        if total_pages > 1 and Composer is not None:
+            import gc
+            out_docs = []
+            for i in range(total_pages):
+                tmp_pdf = OUTPUTS / f"temp_{uuid.uuid4().hex}.pdf"
+                page_writer = PdfWriter()
+                page_writer.add_page(reader.pages[i])
+                with open(tmp_pdf, 'wb') as fp:
+                    page_writer.write(fp)
+                
+                tmp_docx = OUTPUTS / f"temp_{uuid.uuid4().hex}.docx"
+                cv = Converter(str(tmp_pdf))
+                try:
+                    cv.convert(str(tmp_docx), start=0, end=None, multi_processing=False)
+                except TypeError:
+                    cv.convert(str(tmp_docx), start=0, end=None)
+                cv.close()
+                cv = None
+                
+                if tmp_docx.exists() and tmp_docx.stat().st_size > 0:
+                    out_docs.append(tmp_docx)
+                
+                tmp_pdf.unlink(missing_ok=True)
+                gc.collect()
+            
+            if out_docs:
+                master = Document(str(out_docs[0]))
+                composer = Composer(master)
+                for tmp_docx in out_docs[1:]:
+                    sub_doc = Document(str(tmp_docx))
+                    composer.append(sub_doc)
+                composer.save(str(out))
+                
+                for tmp_docx in out_docs:
+                    tmp_docx.unlink(missing_ok=True)
+        else:
+            cv = Converter(str(pdf))
+            try:
+                cv.convert(str(out), start=0, end=None, multi_processing=False)
+            except TypeError:
+                cv.convert(str(out), start=0, end=None)
+            cv.close()
+            cv = None
 
         if not out.exists() or out.stat().st_size <= 0:
             resp = jsonify(error='Conversion failed. Please try another PDF.')
@@ -1851,5 +1894,6 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
