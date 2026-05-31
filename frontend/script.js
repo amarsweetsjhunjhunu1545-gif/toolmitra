@@ -305,12 +305,10 @@ function parsePageRange(str, total) {
 }
 
 // Client-side PDF to Word using pdf.js text extraction
-async function clientPdfToWord(file) {
-  if (!window.pdfjsLib) throw new Error('PDF.js not loaded');
-  
-  const arrayBuffer = await file.arrayBuffer();
-  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-  const totalPages = pdf.numPages;
+  const blob = new Blob([htmlContent], { type: 'application/msword' });
+  const stem = file.name.replace(/\.pdf$/i, '');
+  return { blob, filename: `${stem}_editable_word.doc` };
+}
   
   // Extract text from all pages
   let allText = [];
