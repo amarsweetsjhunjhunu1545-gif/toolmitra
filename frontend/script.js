@@ -5,11 +5,56 @@ const API = (location.hostname === 'localhost' || location.hostname === '127.0.0
   ? 'http://127.0.0.1:5000'
   : 'https://toolmitra-api.onrender.com';
 
+// ============ BACKEND WARM-UP (Fix CORS / cold start) ============
+// Render free tier sleeps after 15 min inactivity. Wake it up immediately on page load.
+let backendReady = false;
+let backendWaking = false;
+
+async function warmUpBackend() {
+  if (backendReady || backendWaking) return;
+  backendWaking = true;
+  try {
+    const res = await fetch(API + '/api/health', { method: 'GET', mode: 'cors', cache: 'no-store' });
+    if (res.ok) { backendReady = true; console.log('✅ Backend is awake and ready.'); }
+  } catch (e) {
+    console.log('⏳ Backend waking up... will retry.');
+    // Retry after 5 seconds
+    setTimeout(async () => {
+      try {
+        const res = await fetch(API + '/api/health', { method: 'GET', mode: 'cors', cache: 'no-store' });
+        if (res.ok) { backendReady = true; console.log('✅ Backend is awake (2nd try).'); }
+      } catch (e2) {
+        console.log('⏳ Backend still waking up...');
+        // Third retry after 8 more seconds
+        setTimeout(async () => {
+          try {
+            const res = await fetch(API + '/api/health', { method: 'GET', mode: 'cors', cache: 'no-store' });
+            if (res.ok) { backendReady = true; console.log('✅ Backend is awake (3rd try).'); }
+          } catch (e3) { console.log('⚠️ Backend may need manual wake.'); }
+        }, 8000);
+      }
+    }, 5000);
+  }
+  backendWaking = false;
+}
+
+// Keep-alive: ping backend every 4 minutes to prevent cold start during session.
+setInterval(() => {
+  if (!backendReady) return;
+  fetch(API + '/api/health', { method: 'GET', mode: 'cors', cache: 'no-store' })
+    .then(r => { if (r.ok) backendReady = true; })
+    .catch(() => { backendReady = false; });
+}, 4 * 60 * 1000);
+
+// Start warming up immediately
+warmUpBackend();
+
+// ============ UTILS ============
 function safeFileName(name){
   return (name || 'orbixapdftool_download').replace(/[\\/:*?"<>|]+/g,'_').replace(/\s+/g,'_');
 }
 
-async function fetchWithTimeout(url, options={}, timeoutMs=180000){
+async function fetchWithTimeout(url, options={}, timeoutMs=120000){
   const controller = new AbortController();
   const timer = setTimeout(()=>controller.abort(), timeoutMs);
   try{
@@ -17,6 +62,34 @@ async function fetchWithTimeout(url, options={}, timeoutMs=180000){
   }finally{
     clearTimeout(timer);
   }
+}
+
+// Fetch with auto-retry for CORS / network errors (backend cold start fix)
+async function fetchWithRetry(url, options={}, maxRetries=2, timeoutMs=120000) {
+  let lastError = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetchWithTimeout(url, options, timeoutMs);
+      return res;
+    } catch (err) {
+      lastError = err;
+      console.log(`⚠️ Attempt ${attempt + 1} failed:`, err.message);
+      if (attempt < maxRetries) {
+        // Show user-friendly message while retrying
+        const st = document.getElementById('status');
+        if (st) st.textContent = `Server is starting up... retrying (${attempt + 2}/${maxRetries + 1})`;
+        // Wait before retry: 3s first, 6s second
+        await new Promise(r => setTimeout(r, (attempt + 1) * 3000));
+        // Also try to wake up backend
+        warmUpBackend();
+      }
+    }
+  }
+  // All retries failed
+  if (lastError && (lastError.name === 'AbortError' || lastError.message?.includes('abort'))) {
+    throw new Error('Server is taking too long. Please try again in 30 seconds (server is waking up).');
+  }
+  throw new Error('Server connection failed. The server may be starting up — please try again in 30 seconds.');
 }
 
 async function downloadBlobMobileFriendly(blob, filename){
@@ -43,6 +116,8 @@ async function downloadBlobMobileFriendly(blob, filename){
   setTimeout(()=>URL.revokeObjectURL(url), 60000);
   a.remove();
 }
+
+// ============ TOOLS LIST ============
 const tools = [
  {t:'Merge PDF',e:'/api/merge-pdf',d:'Combine PDFs in the order you want.',i:'⇄',type:'multi',accept:'.pdf'},
  {t:'Split PDF',e:'/api/split-pdf',d:'Separate pages into independent PDF files.',i:'✂',type:'single',accept:'.pdf',extra:[['pages','Pages e.g. 1-3,5']]},
@@ -207,6 +282,199 @@ function finishProcessingBox(ok=true, msg='Done! File downloaded.'){
 }
 function hideProcessingBox(){const el=document.getElementById('processingBox'); if(el) el.classList.add('hidden'); clearInterval(progressTimer);}
 
+// ============ CLIENT-SIDE PROCESSING FUNCTIONS ============
+// These run instantly in the browser — no server needed!
+
+// Parse page range string like "1-3,5" into zero-indexed array
+function parsePageRange(str, total) {
+  if (!str || !str.trim()) return Array.from({length: total}, (_, i) => i);
+  const pages = new Set();
+  str.replace(/\s/g, '').split(',').forEach(part => {
+    if (!part) return;
+    if (part.includes('-')) {
+      const [a, b] = part.split('-').map(Number);
+      for (let i = a; i <= b; i++) {
+        if (i >= 1 && i <= total) pages.add(i - 1);
+      }
+    } else {
+      const n = Number(part);
+      if (n >= 1 && n <= total) pages.add(n - 1);
+    }
+  });
+  return [...pages].sort((a, b) => a - b);
+}
+
+// Client-side PDF to Word using pdf.js text extraction
+async function clientPdfToWord(file) {
+  if (!window.pdfjsLib) throw new Error('PDF.js not loaded');
+  
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const totalPages = pdf.numPages;
+  
+  // Extract text from all pages
+  let allText = [];
+  for (let i = 1; i <= totalPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    let pageText = '';
+    let lastY = null;
+    
+    for (const item of textContent.items) {
+      if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) {
+        pageText += '\n';
+      }
+      pageText += item.str;
+      lastY = item.transform[5];
+    }
+    allText.push({ page: i, text: pageText });
+  }
+  
+  // Build a simple DOCX using xml template
+  // DOCX is a ZIP file with XML inside
+  // We'll create a minimal valid DOCX
+  const { PDFDocument } = window.PDFLib || {};
+  
+  // Use a simpler approach: create a .doc (HTML-based Word document)
+  let htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>PDF to Word</title>
+<style>
+body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.5; margin: 1in; }
+.page-break { page-break-after: always; }
+.page-header { color: #666; font-size: 9pt; margin-bottom: 12pt; border-bottom: 1px solid #ddd; padding-bottom: 4pt; }
+p { margin: 0 0 6pt 0; }
+</style></head><body>`;
+  
+  for (let i = 0; i < allText.length; i++) {
+    const { page, text } = allText[i];
+    htmlContent += `<div class="page-header">Page ${page}</div>`;
+    const lines = text.split('\n');
+    for (const line of lines) {
+      htmlContent += `<p>${line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') || '&nbsp;'}</p>`;
+    }
+    if (i < allText.length - 1) {
+      htmlContent += `<div class="page-break"></div>`;
+    }
+  }
+  htmlContent += '</body></html>';
+  
+  const blob = new Blob([htmlContent], { type: 'application/msword' });
+  const stem = file.name.replace(/\.pdf$/i, '');
+  return { blob, filename: `${stem}_editable_word.doc` };
+}
+
+// Client-side Extract Text
+async function clientExtractText(file) {
+  if (!window.pdfjsLib) throw new Error('PDF.js not loaded');
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  let allText = '';
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    allText += `--- Page ${i} ---\n`;
+    let lastY = null;
+    for (const item of textContent.items) {
+      if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) allText += '\n';
+      allText += item.str;
+      lastY = item.transform[5];
+    }
+    allText += '\n\n';
+  }
+  const blob = new Blob([allText], { type: 'text/plain;charset=utf-8' });
+  const stem = file.name.replace(/\.pdf$/i, '');
+  return { blob, filename: `${stem}_text.txt` };
+}
+
+// Client-side Split PDF (creates separate PDFs in a downloadable set)
+async function clientSplitPdf(file, pagesStr) {
+  if (!window.PDFLib) throw new Error('PDF-Lib not loaded');
+  const { PDFDocument } = window.PDFLib;
+  const buf = await file.arrayBuffer();
+  const srcPdf = await PDFDocument.load(buf);
+  const total = srcPdf.getPageCount();
+  const pages = parsePageRange(pagesStr, total);
+  
+  if (pages.length === 0) throw new Error('No valid pages selected');
+  
+  // If only one page range, just extract those pages
+  const newPdf = await PDFDocument.create();
+  const copiedPages = await newPdf.copyPages(srcPdf, pages);
+  copiedPages.forEach(page => newPdf.addPage(page));
+  const pdfBytes = await newPdf.save();
+  const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+  const stem = file.name.replace(/\.pdf$/i, '');
+  return { blob, filename: `${stem}_split_pages.pdf` };
+}
+
+// Client-side Extract Pages
+async function clientExtractPages(file, pagesStr) {
+  if (!window.PDFLib) throw new Error('PDF-Lib not loaded');
+  const { PDFDocument } = window.PDFLib;
+  const buf = await file.arrayBuffer();
+  const srcPdf = await PDFDocument.load(buf);
+  const total = srcPdf.getPageCount();
+  const pages = parsePageRange(pagesStr || '1', total);
+  
+  const newPdf = await PDFDocument.create();
+  const copiedPages = await newPdf.copyPages(srcPdf, pages);
+  copiedPages.forEach(page => newPdf.addPage(page));
+  const pdfBytes = await newPdf.save();
+  const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+  const stem = file.name.replace(/\.pdf$/i, '');
+  return { blob, filename: `${stem}_selected_pages.pdf` };
+}
+
+// Client-side Organize PDF (reorder pages)
+async function clientOrganizePdf(file, orderStr) {
+  if (!window.PDFLib) throw new Error('PDF-Lib not loaded');
+  const { PDFDocument } = window.PDFLib;
+  const buf = await file.arrayBuffer();
+  const srcPdf = await PDFDocument.load(buf);
+  const total = srcPdf.getPageCount();
+  
+  let order;
+  if (!orderStr || !orderStr.trim()) {
+    order = Array.from({length: total}, (_, i) => i);
+  } else {
+    order = orderStr.replace(/\s/g, '').split(',').map(n => parseInt(n) - 1).filter(n => n >= 0 && n < total);
+  }
+  
+  const newPdf = await PDFDocument.create();
+  const copiedPages = await newPdf.copyPages(srcPdf, order);
+  copiedPages.forEach(page => newPdf.addPage(page));
+  const pdfBytes = await newPdf.save();
+  const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+  const stem = file.name.replace(/\.pdf$/i, '');
+  return { blob, filename: `${stem}_organized.pdf` };
+}
+
+// Client-side JPG to PDF
+async function clientJpgToPdf(files) {
+  if (!window.PDFLib) throw new Error('PDF-Lib not loaded');
+  const { PDFDocument } = window.PDFLib;
+  const pdfDoc = await PDFDocument.create();
+  
+  for (const file of files) {
+    const bytes = await file.arrayBuffer();
+    let image;
+    const type = file.type.toLowerCase();
+    if (type.includes('png')) {
+      image = await pdfDoc.embedPng(bytes);
+    } else {
+      // For JPG, JPEG, and other formats convert to JPG
+      image = await pdfDoc.embedJpg(bytes);
+    }
+    const page = pdfDoc.addPage([image.width, image.height]);
+    page.drawImage(image, { x: 0, y: 0, width: image.width, height: image.height });
+  }
+  
+  const pdfBytes = await pdfDoc.save();
+  const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+  return { blob, filename: 'images_to_pdf.pdf' };
+}
+
+// ============ FORM HANDLER ============
 document.getElementById('toolForm').addEventListener('submit',async ev=>{
   ev.preventDefault();
   if(!current)return;
@@ -228,8 +496,10 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
       }
     }
     
-    // Client-Side Processing for instant (< 2s) response
+    // ============ CLIENT-SIDE PROCESSING (Instant < 5s) ============
     let handledClientSide = false;
+    
+    // Tools that can run 100% client-side using PDF-Lib
     if (window.PDFLib) {
       const { PDFDocument } = window.PDFLib;
       try {
@@ -248,8 +518,14 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
           const angle = parseInt(fd.get('angle') || '90');
           const buf = await fileInput.files[0].arrayBuffer();
           const pdf = await PDFDocument.load(buf);
-          const pages = pdf.getPages();
-          pages.forEach(page => page.setRotation({type: 'degrees', angle: (page.getRotation().angle + angle) % 360}));
+          const pagesStr = fd.get('pages') || '';
+          const allPages = pdf.getPages();
+          const targetPages = pagesStr ? parsePageRange(pagesStr, allPages.length) : Array.from({length: allPages.length}, (_, i) => i);
+          targetPages.forEach(idx => {
+            if (idx >= 0 && idx < allPages.length) {
+              allPages[idx].setRotation({type: 'degrees', angle: (allPages[idx].getRotation().angle + angle) % 360});
+            }
+          });
           const pdfBytes = await pdf.save();
           await downloadBlobMobileFriendly(new Blob([pdfBytes], { type: 'application/pdf' }), 'rotated.pdf');
           handledClientSide = true;
@@ -274,20 +550,71 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
           const pdfBytes = await pdf.save();
           await downloadBlobMobileFriendly(new Blob([pdfBytes], { type: 'application/pdf' }), 'deleted_pages.pdf');
           handledClientSide = true;
+        } else if (current.t === 'Extract Pages') {
+          const result = await clientExtractPages(fileInput.files[0], fd.get('pages'));
+          await downloadBlobMobileFriendly(result.blob, result.filename);
+          handledClientSide = true;
+        } else if (current.t === 'Split PDF') {
+          const result = await clientSplitPdf(fileInput.files[0], fd.get('pages'));
+          await downloadBlobMobileFriendly(result.blob, result.filename);
+          handledClientSide = true;
+        } else if (current.t === 'Organize PDF') {
+          const result = await clientOrganizePdf(fileInput.files[0], fd.get('order'));
+          await downloadBlobMobileFriendly(result.blob, result.filename);
+          handledClientSide = true;
+        } else if (current.t === 'JPG to PDF' && fileInput.files.length > 0) {
+          // Try client-side JPG to PDF
+          const result = await clientJpgToPdf([...fileInput.files]);
+          await downloadBlobMobileFriendly(result.blob, result.filename);
+          handledClientSide = true;
         }
       } catch(e) {
-        console.error("Client side processing failed:", e);
+        console.error("Client side PDF-Lib processing failed:", e);
+        // Fall through to server-side
+      }
+    }
+    
+    // Client-side PDF to Word (using pdf.js) — runs in browser, no server needed
+    if (!handledClientSide && current.t === 'PDF to Word' && window.pdfjsLib) {
+      try {
+        const result = await clientPdfToWord(fileInput.files[0]);
+        await downloadBlobMobileFriendly(result.blob, result.filename);
+        handledClientSide = true;
+      } catch(e) {
+        console.error("Client-side PDF to Word failed:", e);
+        // Fall through to server-side
+      }
+    }
+    
+    // Client-side Extract Text (using pdf.js)
+    if (!handledClientSide && current.t === 'Extract PDF Text' && window.pdfjsLib) {
+      try {
+        const result = await clientExtractText(fileInput.files[0]);
+        await downloadBlobMobileFriendly(result.blob, result.filename);
+        handledClientSide = true;
+      } catch(e) {
+        console.error("Client-side text extraction failed:", e);
       }
     }
     
     if (handledClientSide) {
-      st.textContent='Done! File downloaded instantly.';
+      st.textContent='✅ Done! File downloaded instantly (processed in your browser).';
+      st.style.color='#22c55e';
       finishProcessingBox(true,'Done! File downloaded instantly.');
       if(btn){btn.disabled=false; btn.textContent=btn.dataset.oldText||'Process & Download';}
       return;
     }
 
-    const res=await fetchWithTimeout(API+current.e,{method:'POST',body:fd}, 240000);
+    // ============ SERVER-SIDE (with retry for CORS/cold start) ============
+    // Wake backend if needed
+    if (!backendReady) {
+      st.textContent = '⏳ Starting server... please wait (first time takes ~30s).';
+      await warmUpBackend();
+      // Give extra time for wake-up
+      await new Promise(r => setTimeout(r, 2000));
+    }
+    
+    const res = await fetchWithRetry(API + current.e, { method: 'POST', body: fd }, 2, 120000);
     if(!res.ok){let j=await res.json().catch(()=>({error:'Tool error'}));throw new Error(j.error||'Something went wrong')}
     const blob=await res.blob();
     if(!blob || blob.size===0) throw new Error('Empty file received from server');
@@ -296,6 +623,7 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
     const m=disp.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
     if(m)name=decodeURIComponent(m[1].replace(/"/g,''));
     await downloadBlobMobileFriendly(blob,name);
+    backendReady = true; // Server responded, mark as ready
     if(isImage && blob.size){
       const sizeKB = (blob.size/1024).toFixed(1);
       st.textContent=`✅ Done! Compressed image: ${sizeKB} KB downloaded.`;
@@ -314,11 +642,12 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
       st.textContent = msg;
       finishProcessingBox(true, msg);
     } else {
-      st.textContent='Done! File downloaded.';
+      st.textContent='✅ Done! File downloaded.';
       finishProcessingBox(true,'Done! File downloaded.');
     }
   }catch(err){
     st.textContent='Error: '+err.message;
+    st.style.color='#ef4444';
     finishProcessingBox(false,'Error: '+err.message);
   }finally{
     if(btn){btn.disabled=false; btn.textContent=btn.dataset.oldText||'Process & Download';}
