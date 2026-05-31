@@ -1,4 +1,3 @@
-
 // Backend API URL
 // Netlify par deployed frontend ke liye Render backend URL use hoga.
 // Local testing me http://127.0.0.1:5000 auto use hoga.
@@ -131,7 +130,8 @@ const tools = [
  {t:'Excel to PDF',e:'/api/excel-to-pdf',d:'Convert spreadsheet rows into PDF.',i:'X',type:'single',accept:'.xlsx,.xls'},
  {t:'Sign PDF',e:'/api/sign-pdf',d:'Draw signature, add company seal, place anywhere on PDF.',i:'✍',type:'single',accept:'.pdf'},
  {t:'PDF to JPG',e:'/api/pdf-to-jpg',d:'Upload PDF and click Convert JPG Image. Single page PDF downloads JPG directly; multi-page PDF downloads ZIP with JPG images.',i:'JPG',type:'single',accept:'.pdf',btn:'Convert JPG Image'},
- {t:'JPG to PDF',e:'/api/jpg-to-pdf',d:'Convert JPG/PNG images into one PDF.',i:'IMG',type:'multi',accept:'image/*'}, {t:'Watermark',e:'/api/add-watermark',d:'Stamp text watermark over PDF pages.',i:'◆',type:'single',accept:'.pdf',extra:[['text','Watermark text','OrbixaPDFTool']]},
+ {t:'JPG to PDF',e:'/api/jpg-to-pdf',d:'Convert JPG/PNG images into one PDF.',i:'IMG',type:'multi',accept:'image/*'},
+ {t:'Watermark',e:'/api/add-watermark',d:'Stamp text watermark over PDF pages.',i:'◆',type:'single',accept:'.pdf',extra:[['text','Watermark text','OrbixaPDFTool']]},
  {t:'Rotate PDF',e:'/api/rotate-pdf',d:'Rotate all or selected pages.',i:'⟳',type:'single',accept:'.pdf',extra:[['angle','Angle 90/180/270','90'],['pages','Pages blank = all']]},
  {t:'HTML to PDF',e:'/api/html-to-pdf',d:'Paste HTML/text and download PDF.',i:'HTML',type:'html'},
  {t:'Unlock PDF',e:'/api/unlock-pdf',d:'Remove password when you know it.',i:'🔓',type:'single',accept:'.pdf',extra:[['password','Current password']]},
@@ -152,6 +152,7 @@ const tools = [
  {t:'Image Compressor',e:'/api/image-compress',d:'Image upload karo, target size KB enter karo aur JPG/PNG format me download karo.',i:'⚡',type:'image',accept:'image/*',btn:'Compress to KB & Download',extra:[['target_kb','Target size in KB e.g. 100',''],['output_format','Output format: auto / jpg / png','auto']]},
  {t:'QR Generator',e:'#client-qr',d:'Advanced QR: link, UPI/PhonePe, WhatsApp, WiFi, contact, email, SMS, location. PNG/JPG/SVG/PDF download.',i:'QR',type:'client'},
 ];
+
 let current=window.currentTool||null;
 let activeCategory='all';
 function toolCategory(x){const s=(x.t+' '+x.d).toLowerCase(); if(s.includes('qr')||s.includes('camera')) return 'image'; if(s.includes('image')||s.includes('jpg')||s.includes('png')||s.includes('webp')||s.includes('photo')) return 'image'; if(s.includes('protect')||s.includes('unlock')||s.includes('redact')) return 'secure'; if(s.includes('to ')||s.includes('convert')) return 'convert'; return 'pdf';}
@@ -160,10 +161,8 @@ function getSlug(name) { return name.toLowerCase().replace(/ /g, '-').replace(/\
 function render(list=tools){const el=document.getElementById('toolGrid');if(!el)return;el.innerHTML=list.map((x)=>{const cat=toolCategory(x).toUpperCase();return `<a href=\"${getSlug(x.t)+'.html'}\" class="tool" style="text-decoration:none;color:inherit;display:block;"><span class="tag">${cat}</span><div class="icon">${x.i}</div><h3>${x.t}</h3><p>${x.d}</p><small class="toolAction">Open tool →</small></a>`}).join('')}
 function filterTools(){const q=document.getElementById('search').value.toLowerCase();render(tools.filter(x=>(activeCategory==='all'||toolCategory(x)===activeCategory) && (x.t+x.d).toLowerCase().includes(q)))}
 function quickOpen(name){const i=tools.findIndex(x=>x.t===name);if(i>-1)window.location.href=getSlug(tools[i].t)+'.html'}
-function openTool(i){
-  
-  window.location.href=getSlug(tools[i].t)+'.html';
-}
+function openTool(i){ window.location.href=getSlug(tools[i].t)+'.html'; }
+
 function setupImageToolPreview(){
   const input=document.getElementById('imageInput');
   const box=document.getElementById('imagePreviewBox');
@@ -222,7 +221,6 @@ function setupImageToolPreview(){
   });
 }
 function closeModal(){document.getElementById('modal').classList.add('hidden')}
-
 
 function ensureProcessingBox(){
   let el=document.getElementById('processingBox');
@@ -284,8 +282,6 @@ function finishProcessingBox(ok=true, msg='Done! File downloaded.'){
 function hideProcessingBox(){const el=document.getElementById('processingBox'); if(el) el.classList.add('hidden'); clearInterval(progressTimer);}
 
 // ============ CLIENT-SIDE PROCESSING FUNCTIONS ============
-// These run instantly in the browser — no server needed!
-
 // Parse page range string like "1-3,5" into zero-indexed array
 function parsePageRange(str, total) {
   if (!str || !str.trim()) return Array.from({length: total}, (_, i) => i);
@@ -328,7 +324,7 @@ async function clientExtractText(file) {
   return { blob, filename: `${stem}_text.txt` };
 }
 
-// Client-side Split PDF (creates separate PDFs in a downloadable set)
+// Client-side Split PDF
 async function clientSplitPdf(file, pagesStr) {
   if (!window.PDFLib) throw new Error('PDF-Lib not loaded');
   const { PDFDocument } = window.PDFLib;
@@ -339,7 +335,6 @@ async function clientSplitPdf(file, pagesStr) {
   
   if (pages.length === 0) throw new Error('No valid pages selected');
   
-  // If only one page range, just extract those pages
   const newPdf = await PDFDocument.create();
   const copiedPages = await newPdf.copyPages(srcPdf, pages);
   copiedPages.forEach(page => newPdf.addPage(page));
@@ -367,7 +362,7 @@ async function clientExtractPages(file, pagesStr) {
   return { blob, filename: `${stem}_selected_pages.pdf` };
 }
 
-// Client-side Organize PDF (reorder pages)
+// Client-side Organize PDF
 async function clientOrganizePdf(file, orderStr) {
   if (!window.PDFLib) throw new Error('PDF-Lib not loaded');
   const { PDFDocument } = window.PDFLib;
@@ -404,7 +399,6 @@ async function clientJpgToPdf(files) {
     if (type.includes('png')) {
       image = await pdfDoc.embedPng(bytes);
     } else {
-      // For JPG, JPEG, and other formats convert to JPG
       image = await pdfDoc.embedJpg(bytes);
     }
     const page = pdfDoc.addPage([image.width, image.height]);
@@ -441,7 +435,6 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
     // ============ CLIENT-SIDE PROCESSING (Instant < 5s) ============
     let handledClientSide = false;
     
-    // Tools that can run 100% client-side using PDF-Lib
     if (window.PDFLib) {
       const { PDFDocument } = window.PDFLib;
       try {
@@ -505,14 +498,12 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
           await downloadBlobMobileFriendly(result.blob, result.filename);
           handledClientSide = true;
         } else if (current.t === 'JPG to PDF' && fileInput.files.length > 0) {
-          // Try client-side JPG to PDF
           const result = await clientJpgToPdf([...fileInput.files]);
           await downloadBlobMobileFriendly(result.blob, result.filename);
           handledClientSide = true;
         }
       } catch(e) {
         console.error("Client side PDF-Lib processing failed:", e);
-        // Fall through to server-side
       }
     }
     
@@ -536,11 +527,9 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
     }
 
     // ============ SERVER-SIDE (with retry for CORS/cold start) ============
-    // Wake backend if needed
     if (!backendReady) {
       st.textContent = '⏳ Starting server... please wait (first time takes ~30s).';
       await warmUpBackend();
-      // Give extra time for wake-up
       await new Promise(r => setTimeout(r, 2000));
     }
     
@@ -553,7 +542,8 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
     const m=disp.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
     if(m)name=decodeURIComponent(m[1].replace(/"/g,''));
     await downloadBlobMobileFriendly(blob,name);
-    backendReady = true; // Server responded, mark as ready
+    backendReady = true; 
+    
     if(isImage && blob.size){
       const sizeKB = (blob.size/1024).toFixed(1);
       st.textContent=`✅ Done! Compressed image: ${sizeKB} KB downloaded.`;
@@ -583,6 +573,7 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
     if(btn){btn.disabled=false; btn.textContent=btn.dataset.oldText||'Process & Download';}
   }
 });
+
 if(window.currentTool) {
   if(window.currentTool.type === 'image') setupImageToolPreview();
 } else {
@@ -595,5 +586,4 @@ const editor = {
   tool:'select', color:'#111827', size:24, stroke:3, history:[], currentFile:null
 };
 function libReady(){ return window.pdfjsLib && window.fabric && window.jspdf; }
-```
 
