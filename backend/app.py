@@ -223,44 +223,48 @@ def pdf_to_word():
 
         # Main conversion: preserves layout, fonts, tables, images and spacing better
         # than simple text extraction.
-        # MEMORY FIX: If PDF is > 1 page, process page by page to avoid OOM on 512MB server.
+        # MEMORY FIX: If PDF is > 1 page, process page by page and return ZIP.
         total_pages = len(reader.pages)
         
-        if total_pages > 1 and Composer is not None:
+        if total_pages > 1:
             import gc
-            out_docs = []
-            for i in range(total_pages):
-                tmp_pdf = OUTPUTS / f"temp_{uuid.uuid4().hex}.pdf"
-                page_writer = PdfWriter()
-                page_writer.add_page(reader.pages[i])
-                with open(tmp_pdf, 'wb') as fp:
-                    page_writer.write(fp)
-                
-                tmp_docx = OUTPUTS / f"temp_{uuid.uuid4().hex}.docx"
-                cv = Converter(str(tmp_pdf))
-                try:
-                    cv.convert(str(tmp_docx), start=0, end=None, multi_processing=False)
-                except TypeError:
-                    cv.convert(str(tmp_docx), start=0, end=None)
-                cv.close()
-                cv = None
-                
-                if tmp_docx.exists() and tmp_docx.stat().st_size > 0:
-                    out_docs.append(tmp_docx)
-                
-                tmp_pdf.unlink(missing_ok=True)
-                gc.collect()
+            zpath = OUTPUTS / f"{safe_stem}_editable_pages.zip"
             
-            if out_docs:
-                master = Document(str(out_docs[0]))
-                composer = Composer(master)
-                for tmp_docx in out_docs[1:]:
-                    sub_doc = Document(str(tmp_docx))
-                    composer.append(sub_doc)
-                composer.save(str(out))
-                
-                for tmp_docx in out_docs:
-                    tmp_docx.unlink(missing_ok=True)
+            with zipfile.ZipFile(zpath, 'w', compression=zipfile.ZIP_DEFLATED) as z:
+                for i in range(total_pages):
+                    tmp_pdf = OUTPUTS / f"temp_{uuid.uuid4().hex}.pdf"
+                    page_writer = PdfWriter()
+                    page_writer.add_page(reader.pages[i])
+                    with open(tmp_pdf, 'wb') as fp:
+                        page_writer.write(fp)
+                    
+                    tmp_docx = OUTPUTS / f"{safe_stem}_Page_{i+1}.docx"
+                    cv = Converter(str(tmp_pdf))
+                    try:
+                        cv.convert(str(tmp_docx), start=0, end=None, multi_processing=False)
+                    except TypeError:
+                        cv.convert(str(tmp_docx), start=0, end=None)
+                    cv.close()
+                    cv = None
+                    
+                    if tmp_docx.exists() and tmp_docx.stat().st_size > 0:
+                        z.write(tmp_docx, tmp_docx.name)
+                        tmp_docx.unlink(missing_ok=True)
+                    
+                    tmp_pdf.unlink(missing_ok=True)
+                    gc.collect()
+            
+            if not zpath.exists() or zpath.stat().st_size <= 0:
+                resp = jsonify(error='Conversion failed. Please try another PDF.')
+                resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+                return resp, 500
+
+            return send_file(
+                zpath,
+                as_attachment=True,
+                download_name=zpath.name,
+                mimetype='application/zip'
+            )
         else:
             cv = Converter(str(pdf))
             try:
@@ -270,17 +274,17 @@ def pdf_to_word():
             cv.close()
             cv = None
 
-        if not out.exists() or out.stat().st_size <= 0:
-            resp = jsonify(error='Conversion failed. Please try another PDF.')
-            resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
-            return resp, 500
+            if not out.exists() or out.stat().st_size <= 0:
+                resp = jsonify(error='Conversion failed. Please try another PDF.')
+                resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+                return resp, 500
 
-        return send_file(
-            out,
-            as_attachment=True,
-            download_name=out.name,
-            mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-        )
+            return send_file(
+                out,
+                as_attachment=True,
+                download_name=out.name,
+                mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+            )
 
     except Exception as e:
         traceback.print_exc()
