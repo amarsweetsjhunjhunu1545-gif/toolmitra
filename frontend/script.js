@@ -1,3 +1,6 @@
+Ye lijiye poora updated `script.js` code. Aap apni purani file ka poora code delete karke sirf isko copy-paste kar lijiye:
+
+```javascript
 // Backend API URL
 // Netlify par deployed frontend ke liye Render backend URL use hoga.
 // Local testing me http://127.0.0.1:5000 auto use hoga.
@@ -304,63 +307,6 @@ function parsePageRange(str, total) {
   return [...pages].sort((a, b) => a - b);
 }
 
-// Client-side PDF to Word using pdf.js text extraction
-  const blob = new Blob([htmlContent], { type: 'application/msword' });
-  const stem = file.name.replace(/\.pdf$/i, '');
-  return { blob, filename: `${stem}_editable_word.doc` };
-}
-  
-  // Extract text from all pages
-  let allText = [];
-  for (let i = 1; i <= totalPages; i++) {
-    const page = await pdf.getPage(i);
-    const textContent = await page.getTextContent();
-    let pageText = '';
-    let lastY = null;
-    
-    for (const item of textContent.items) {
-      if (lastY !== null && Math.abs(item.transform[5] - lastY) > 5) {
-        pageText += '\n';
-      }
-      pageText += item.str;
-      lastY = item.transform[5];
-    }
-    allText.push({ page: i, text: pageText });
-  }
-  
-  // Build a simple DOCX using xml template
-  // DOCX is a ZIP file with XML inside
-  // We'll create a minimal valid DOCX
-  const { PDFDocument } = window.PDFLib || {};
-  
-  // Use a simpler approach: create a .doc (HTML-based Word document)
-  let htmlContent = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
-<head><meta charset="utf-8"><title>PDF to Word</title>
-<style>
-body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; line-height: 1.5; margin: 1in; }
-.page-break { page-break-after: always; }
-.page-header { color: #666; font-size: 9pt; margin-bottom: 12pt; border-bottom: 1px solid #ddd; padding-bottom: 4pt; }
-p { margin: 0 0 6pt 0; }
-</style></head><body>`;
-  
-  for (let i = 0; i < allText.length; i++) {
-    const { page, text } = allText[i];
-    htmlContent += `<div class="page-header">Page ${page}</div>`;
-    const lines = text.split('\n');
-    for (const line of lines) {
-      htmlContent += `<p>${line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') || '&nbsp;'}</p>`;
-    }
-    if (i < allText.length - 1) {
-      htmlContent += `<div class="page-break"></div>`;
-    }
-  }
-  htmlContent += '</body></html>';
-  
-  const blob = new Blob([htmlContent], { type: 'application/msword' });
-  const stem = file.name.replace(/\.pdf$/i, '');
-  return { blob, filename: `${stem}_editable_word.doc` };
-}
-
 // Client-side Extract Text
 async function clientExtractText(file) {
   if (!window.pdfjsLib) throw new Error('PDF.js not loaded');
@@ -572,18 +518,6 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
       }
     }
     
-    // Client-side PDF to Word (using pdf.js) — runs in browser, no server needed
-    if (!handledClientSide && current.t === 'PDF to Word' && window.pdfjsLib) {
-      try {
-        const result = await clientPdfToWord(fileInput.files[0]);
-        await downloadBlobMobileFriendly(result.blob, result.filename);
-        handledClientSide = true;
-      } catch(e) {
-        console.error("Client-side PDF to Word failed:", e);
-        // Fall through to server-side
-      }
-    }
-    
     // Client-side Extract Text (using pdf.js)
     if (!handledClientSide && current.t === 'Extract PDF Text' && window.pdfjsLib) {
       try {
@@ -663,4 +597,5 @@ const editor = {
   tool:'select', color:'#111827', size:24, stroke:3, history:[], currentFile:null
 };
 function libReady(){ return window.pdfjsLib && window.fabric && window.jspdf; }
+```
 
