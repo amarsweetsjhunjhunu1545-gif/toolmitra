@@ -67,12 +67,21 @@ OUTPUTS.mkdir(exist_ok=True)
 app = Flask(__name__)
 # Universal CORS setup: Netlify/mobile/PC/tablet sab origins allow.
 # 500 error par bhi browser ko readable JSON error milega.
+ALLOWED_ORIGINS = [
+    'https://orbixapdftool.in',
+    'https://www.orbixapdftool.in',
+    'http://localhost:5500',
+    'http://127.0.0.1:5500',
+    'http://localhost:3000',
+    'http://127.0.0.1:5000',
+]
 CORS(app, resources={r"/*": {
     "origins": "*",
     "methods": ["GET", "POST", "OPTIONS"],
     "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
     "expose_headers": ["Content-Disposition", "X-Original-Size", "X-Compressed-Size", "X-Target-Size", "X-Target-Reached", "X-Exact-Target"],
     "supports_credentials": False,
+    "max_age": 86400,
 }})
 app.config['MAX_CONTENT_LENGTH'] = 150 * 1024 * 1024
 
@@ -88,23 +97,33 @@ def handle_preflight():
 
 @app.after_request
 def add_cors_headers(response):
-    response.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+    origin = request.headers.get('Origin', '')
+    # Allow specific known origins or fallback to wildcard
+    if origin and any(origin == o for o in ALLOWED_ORIGINS):
+        response.headers['Access-Control-Allow-Origin'] = origin
+    else:
+        response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Vary'] = 'Origin'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
     response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition, X-Original-Size, X-Compressed-Size, X-Target-Size, X-Target-Reached, X-Exact-Target'
+    response.headers['Access-Control-Max-Age'] = '86400'
     response.headers['Cache-Control'] = response.headers.get('Cache-Control', 'no-store')
     return response
 
 @app.errorhandler(413)
 def too_large(e):
-    return jsonify(error='File too large. Please upload a smaller file.'), 413
+    resp = jsonify(error='File too large. Please upload a smaller file.')
+    resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+    return resp, 413
 
 @app.errorhandler(Exception)
 def handle_all_errors(e):
     traceback.print_exc()
     msg = str(e) or 'Internal server error'
-    return jsonify(error=msg), 500
+    resp = jsonify(error=msg)
+    resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+    return resp, 500
 
 def uid(name='file'):
     return f"{uuid.uuid4().hex}_{secure_filename(name)}"
@@ -1814,3 +1833,4 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
