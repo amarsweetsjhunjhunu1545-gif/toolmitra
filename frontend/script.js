@@ -1,6 +1,4 @@
-Ye lijiye poora updated `script.js` code. Aap apni purani file ka poora code delete karke sirf isko copy-paste kar lijiye:
 
-```javascript
 // Backend API URL
 // Netlify par deployed frontend ke liye Render backend URL use hoga.
 // Local testing me http://127.0.0.1:5000 auto use hoga.
