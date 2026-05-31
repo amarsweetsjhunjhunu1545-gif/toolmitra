@@ -173,7 +173,9 @@ def pdf_to_word():
         return ('', 204)
 
     if Converter is None:
-        return jsonify(error='PDF to Word engine is not installed. Add pdf2docx in requirements.txt and redeploy.'), 500
+        resp = jsonify(error='PDF to Word engine is not installed. Add pdf2docx in requirements.txt and redeploy.')
+        resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+        return resp, 500
 
     pdf = None
     cv = None
@@ -183,10 +185,14 @@ def pdf_to_word():
         size = pdf.stat().st_size
 
         if size <= 0:
-            return jsonify(error='Uploaded PDF is empty.'), 400
+            resp = jsonify(error='Uploaded PDF is empty.')
+            resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+            return resp, 400
 
         if size > 80 * 1024 * 1024:
-            return jsonify(error='PDF too large. Please upload below 80MB.'), 413
+            resp = jsonify(error='PDF too large. Please upload below 80MB.')
+            resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+            return resp, 413
 
         # Password / damaged PDF check before conversion
         try:
@@ -195,10 +201,14 @@ def pdf_to_word():
                 try:
                     reader.decrypt('')
                 except Exception:
-                    return jsonify(error='This PDF is password protected. Please unlock it first.'), 400
+                    resp = jsonify(error='This PDF is password protected. Please unlock it first.')
+                    resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+                    return resp, 400
 
             if len(reader.pages) > 300:
-                return jsonify(error='PDF has too many pages. Please split it into smaller PDFs first.'), 413
+                resp = jsonify(error='PDF has too many pages. Please split it into smaller PDFs first.')
+                resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+                return resp, 413
         except Exception:
             # pdf2docx may still handle some PDFs better than pypdf, so do not stop here.
             pass
@@ -209,12 +219,18 @@ def pdf_to_word():
         # Main conversion: preserves layout, fonts, tables, images and spacing better
         # than simple text extraction.
         cv = Converter(str(pdf))
-        cv.convert(str(out), start=0, end=None)
+        try:
+            cv.convert(str(out), start=0, end=None, multi_processing=False)
+        except TypeError:
+            # Fallback if multi_processing arg is not supported in the installed version
+            cv.convert(str(out), start=0, end=None)
         cv.close()
         cv = None
 
         if not out.exists() or out.stat().st_size <= 0:
-            return jsonify(error='Conversion failed. Please try another PDF.'), 500
+            resp = jsonify(error='Conversion failed. Please try another PDF.')
+            resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+            return resp, 500
 
         return send_file(
             out,
@@ -225,7 +241,9 @@ def pdf_to_word():
 
     except Exception as e:
         traceback.print_exc()
-        return jsonify(error=f'PDF to Word failed: {str(e)}'), 500
+        resp = jsonify(error=f'PDF to Word failed: {str(e)}')
+        resp.headers['Access-Control-Allow-Origin'] = request.headers.get('Origin', '*')
+        return resp, 500
 
     finally:
         try:
@@ -1833,4 +1851,5 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
