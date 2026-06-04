@@ -538,7 +538,6 @@ def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
         try:
             env = os.environ.copy()
             if os.name != 'nt':
-                # Render/Serverless environments often have read-only HOME or crash LibreOffice.
                 tmp_home = tempfile.mkdtemp()
                 env['HOME'] = tmp_home
                 
@@ -554,17 +553,17 @@ def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
                 input_str
             ]
             
-            subprocess.check_call(cmd, env=env, timeout=120)
+            subprocess.check_call(cmd, env=env, timeout=180)
             
-            # LibreOffice output
             expected_out = Path(output_dir) / (Path(input_str).stem + '.pdf')
             if expected_out.exists():
                 if expected_out != Path(output_path):
                     shutil.move(str(expected_out), output_str)
                 return True
+            else:
+                raise Exception("LibreOffice executed but PDF was not created.")
         except Exception as e:
-            print(f"LibreOffice conversion failed: {e}")
-            pass
+            raise Exception(f"LibreOffice conversion failed: {str(e)}")
             
     # 2. Try Windows COM via PowerShell if LibreOffice not found
     if os.name == 'nt':
@@ -579,11 +578,16 @@ def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
             subprocess.check_call(['powershell', '-NoProfile', '-Command', ps_script], timeout=120)
             if Path(output_path).exists():
                 return True
+            else:
+                raise Exception("PowerShell COM executed but PDF was not created.")
         except Exception as e:
-            print(f"PowerShell COM conversion failed: {e}")
-            pass
+            raise Exception(f"PowerShell COM conversion failed: {str(e)}")
 
-    return False
+    # If we are here, neither LibreOffice nor Windows COM is available
+    if os.name != 'nt':
+        raise Exception("Server par LibreOffice install nahi hai. Kripya apne host par LibreOffice package install karein taaki design preserve ho sake.")
+    else:
+        raise Exception("Aapke Windows system par MS Office ya LibreOffice install nahi hai.")
 
 @app.post('/api/word-to-pdf')
 def word_to_pdf():
