@@ -532,7 +532,13 @@ def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
                 libre_exe = p
                 break
     else:
-        libre_exe = shutil.which('libreoffice') or shutil.which('soffice')
+        for cmd in ['libreoffice', 'soffice', '/usr/bin/libreoffice', '/usr/bin/soffice', '/usr/lib/libreoffice/program/soffice', '/usr/bin/soffice.bin']:
+            if shutil.which(cmd):
+                libre_exe = shutil.which(cmd)
+                break
+            elif os.path.exists(cmd):
+                libre_exe = cmd
+                break
         
     if libre_exe:
         try:
@@ -1890,5 +1896,6 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
