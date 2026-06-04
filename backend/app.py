@@ -104,7 +104,9 @@ def too_large(e):
 def handle_all_errors(e):
     traceback.print_exc()
     msg = str(e) or 'Internal server error'
-    return jsonify(error=msg), 500
+    resp = jsonify(error=msg)
+    resp.headers['Access-Control-Allow-Origin'] = '*'
+    return resp, 500
 
 def uid(name='file'):
     return f"{uuid.uuid4().hex}_{secure_filename(name)}"
@@ -1902,6 +1904,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
