@@ -536,7 +536,27 @@ def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
         
     if libre_exe:
         try:
-            subprocess.check_call([libre_exe, '--headless', '--convert-to', 'pdf', '--outdir', output_dir, input_str], timeout=120)
+            env = os.environ.copy()
+            if os.name != 'nt':
+                # Render/Serverless environments often have read-only HOME or crash LibreOffice.
+                tmp_home = tempfile.mkdtemp()
+                env['HOME'] = tmp_home
+                
+            cmd = [
+                libre_exe, 
+                '--headless', 
+                '--invisible',
+                '--nologo',
+                '--nodefault',
+                '--nofirststartwizard',
+                '--convert-to', 'pdf', 
+                '--outdir', output_dir, 
+                input_str
+            ]
+            
+            subprocess.check_call(cmd, env=env, timeout=120)
+            
+            # LibreOffice output
             expected_out = Path(output_dir) / (Path(input_str).stem + '.pdf')
             if expected_out.exists():
                 if expected_out != Path(output_path):
@@ -1866,4 +1886,5 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
