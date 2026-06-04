@@ -3,7 +3,7 @@
 // Local testing me http://127.0.0.1:5000 auto use hoga.
 const API = (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:')
   ? 'http://127.0.0.1:5000'
-  : 'https://toolmitra-idnh.onrender.com';
+  : 'https://toolmitra-1dnh.onrender.com';
 
 function safeFileName(name){
   return (name || 'orbixapdftool_download').replace(/[\\/:*?"<>|]+/g,'_').replace(/\s+/g,'_');
@@ -336,4 +336,5 @@ const editor = {
   tool:'select', color:'#111827', size:24, stroke:3, history:[], currentFile:null
 };
 function libReady(){ return window.pdfjsLib && window.fabric && window.jspdf; }
+
 
