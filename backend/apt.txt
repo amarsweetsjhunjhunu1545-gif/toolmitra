@@ -1,5 +1,6 @@
 qpdf
 ghostscript
+libreoffice
 
 fonts-noto-core
 fonts-noto-extra
