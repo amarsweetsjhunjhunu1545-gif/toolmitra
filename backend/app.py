@@ -593,7 +593,6 @@ def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
     if os.name != 'nt':
         debug_info = "Unknown"
         try:
-            import os
             files = [f for f in os.listdir('/usr/bin') if 'office' in f.lower() or 'soffice' in f.lower()]
             debug_info = f"Files: {files}, PATH: {os.environ.get('PATH')}"
         except Exception as e:
@@ -1903,6 +1902,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
