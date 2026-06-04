@@ -1,7 +1,7 @@
 FROM python:3.10-slim
 
 # Create a non-root user
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+RUN groupadd -r appuser && useradd -r -m -g appuser appuser
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice \
