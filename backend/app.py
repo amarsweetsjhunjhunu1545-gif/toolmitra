@@ -591,7 +591,14 @@ def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
 
     # If we are here, neither LibreOffice nor Windows COM is available
     if os.name != 'nt':
-        raise Exception("Server par LibreOffice install nahi hai. Kripya apne host par LibreOffice package install karein taaki design preserve ho sake.")
+        debug_info = "Unknown"
+        try:
+            import os
+            files = [f for f in os.listdir('/usr/bin') if 'office' in f.lower() or 'soffice' in f.lower()]
+            debug_info = f"Files: {files}, PATH: {os.environ.get('PATH')}"
+        except Exception as e:
+            debug_info = str(e)
+        raise Exception(f"Server par LibreOffice install nahi hai. Debug info: {debug_info}")
     else:
         raise Exception("Aapke Windows system par MS Office ya LibreOffice install nahi hai.")
 
@@ -1896,6 +1903,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
