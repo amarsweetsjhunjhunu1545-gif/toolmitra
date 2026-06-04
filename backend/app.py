@@ -519,11 +519,59 @@ def page_numbers():
     with open(out,'wb') as fp: writer.write(fp)
     return send(out,out.name)
 
+def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
+    input_str = str(Path(input_path).resolve())
+    output_str = str(Path(output_path).resolve())
+    output_dir = str(Path(output_path).parent.resolve())
+    
+    # 1. Try LibreOffice
+    libre_exe = None
+    if os.name == 'nt':
+        for p in [r"C:\Program Files\LibreOffice\program\soffice.exe", r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"]:
+            if os.path.exists(p):
+                libre_exe = p
+                break
+    else:
+        libre_exe = shutil.which('libreoffice') or shutil.which('soffice')
+        
+    if libre_exe:
+        try:
+            subprocess.check_call([libre_exe, '--headless', '--convert-to', 'pdf', '--outdir', output_dir, input_str], timeout=120)
+            expected_out = Path(output_dir) / (Path(input_str).stem + '.pdf')
+            if expected_out.exists():
+                if expected_out != Path(output_path):
+                    shutil.move(str(expected_out), output_str)
+                return True
+        except Exception as e:
+            print(f"LibreOffice conversion failed: {e}")
+            pass
+            
+    # 2. Try Windows COM via PowerShell if LibreOffice not found
+    if os.name == 'nt':
+        try:
+            if office_type == 'powerpoint':
+                ps_script = f"$ppt = New-Object -ComObject PowerPoint.Application; $doc = $ppt.Presentations.Open('{input_str}', 2, 0, 0); $doc.SaveAs('{output_str}', 32); $doc.Close(); $ppt.Quit();"
+            elif office_type == 'word':
+                ps_script = f"$word = New-Object -ComObject Word.Application; $doc = $word.Documents.Open('{input_str}', $false, $true); $doc.SaveAs([ref]'{output_str}', [ref]17); $doc.Close(); $word.Quit();"
+            elif office_type == 'excel':
+                ps_script = f"$excel = New-Object -ComObject Excel.Application; $wb = $excel.Workbooks.Open('{input_str}'); $wb.ExportAsFixedFormat(0, '{output_str}'); $wb.Close($false); $excel.Quit();"
+            
+            subprocess.check_call(['powershell', '-NoProfile', '-Command', ps_script], timeout=120)
+            if Path(output_path).exists():
+                return True
+        except Exception as e:
+            print(f"PowerShell COM conversion failed: {e}")
+            pass
+
+    return False
+
 @app.post('/api/word-to-pdf')
 def word_to_pdf():
     docx, original = save_file('file')
-    doc = Document(str(docx))
     out = OUTPUTS / (Path(original).stem + '_converted.pdf')
+    if _convert_office_to_pdf(docx, out, 'word'):
+        return send(out, out.name)
+    doc = Document(str(docx))
     c = canvas.Canvas(str(out), pagesize=A4)
     width, height = A4; y = height - 50
     c.setFont('Helvetica', 11)
@@ -987,11 +1035,13 @@ def pdf_to_excel():
 
 @app.post('/api/ppt-to-pdf')
 def ppt_to_pdf():
+    ppt, original = save_file('file')
+    out = OUTPUTS/(Path(original).stem+'_converted.pdf')
+    if _convert_office_to_pdf(ppt, out, 'powerpoint'):
+        return send(out, out.name)
     if Presentation is None:
         return jsonify(error='python-pptx is not installed. Run pip install python-pptx'), 400
-    ppt, original = save_file('file')
     prs = Presentation(str(ppt))
-    out = OUTPUTS/(Path(original).stem+'_converted.pdf')
     c = canvas.Canvas(str(out), pagesize=A4)
     width, height = A4
     for idx, slide in enumerate(prs.slides, 1):
@@ -1011,11 +1061,13 @@ def ppt_to_pdf():
 
 @app.post('/api/excel-to-pdf')
 def excel_to_pdf():
+    xlsx, original = save_file('file')
+    out = OUTPUTS/(Path(original).stem+'_converted.pdf')
+    if _convert_office_to_pdf(xlsx, out, 'excel'):
+        return send(out, out.name)
     if load_workbook is None:
         return jsonify(error='openpyxl is not installed. Run pip install openpyxl'), 400
-    xlsx, original = save_file('file')
     wb = load_workbook(str(xlsx), data_only=True)
-    out = OUTPUTS/(Path(original).stem+'_converted.pdf')
     c = canvas.Canvas(str(out), pagesize=A4)
     width, height = A4
     for ws in wb.worksheets:
@@ -1814,3 +1866,4 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
