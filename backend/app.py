@@ -1232,7 +1232,7 @@ def ppt_to_pdf():
                 pass
 
         # ── Shape renderer ────────────────────────────────────────────────
-        def render_shape(shape, img, drw):
+        def render_shape(shape, img, drw, is_master=False):
             try:
                 left   = e2p(shape.left)
                 top    = e2p(shape.top)
@@ -1245,7 +1245,7 @@ def ppt_to_pdf():
                 if shape.shape_type == 6:
                     try:
                         for child in shape.shapes:
-                            render_shape(child, img, drw)
+                            render_shape(child, img, drw, is_master)
                     except Exception:
                         pass
                     return
@@ -1328,7 +1328,10 @@ def ppt_to_pdf():
                                     drw.rectangle([cx, cy, cx+col_w, cy+row_h], outline=(180,180,180), width=1)
                                     # Cell text
                                     try:
-                                        cell_text = cell.text_frame.text
+                                        if is_master:
+                                            cell_text = ''
+                                        else:
+                                            cell_text = cell.text_frame.text
                                         if cell_text:
                                             fnt = load_font(max(8, int(11 * DPI / 72)))
                                             drw.text((cx+3, cy+3), cell_text[:40], fill=(0,0,0), font=fnt)
@@ -1340,6 +1343,8 @@ def ppt_to_pdf():
 
                 # TEXT FRAME
                 if hasattr(shape, 'text_frame') and shape.text_frame:
+                    if is_master:
+                        return
                     tf    = shape.text_frame
                     text_y = top + 4
 
@@ -1468,13 +1473,13 @@ def ppt_to_pdf():
             # Render master placeholders (logos, branding)
             try:
                 for sp in slide.slide_layout.slide_master.shapes:
-                    render_shape(sp, slide_img, draw_ctx)
+                    render_shape(sp, slide_img, draw_ctx, is_master=True)
             except Exception:
                 pass
             # Render layout placeholders
             try:
                 for sp in slide.slide_layout.shapes:
-                    render_shape(sp, slide_img, draw_ctx)
+                    render_shape(sp, slide_img, draw_ctx, is_master=True)
             except Exception:
                 pass
             # Render actual slide shapes
@@ -2327,6 +2332,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
