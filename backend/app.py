@@ -1074,28 +1074,225 @@ def pdf_to_excel():
 @app.post('/api/ppt-to-pdf')
 def ppt_to_pdf():
     ppt, original = save_file('file')
-    out = OUTPUTS/(Path(original).stem+'_converted.pdf')
-    if _convert_office_to_pdf(ppt, out, 'powerpoint'):
-        return send(out, out.name)
+    out = OUTPUTS / (Path(original).stem + '_converted.pdf')
+
+    # --- Method 1: LibreOffice / Windows COM (best quality, full fidelity) ---
+    try:
+        if _convert_office_to_pdf(ppt, out, 'powerpoint'):
+            return send(out, out.name)
+    except Exception:
+        pass  # fallback to image-based rendering below
+
+    # --- Method 2: python-pptx → slide images → PDF (layout-preserving fallback) ---
     if Presentation is None:
-        return jsonify(error='python-pptx is not installed. Run pip install python-pptx'), 400
-    prs = Presentation(str(ppt))
-    c = canvas.Canvas(str(out), pagesize=A4)
-    width, height = A4
-    for idx, slide in enumerate(prs.slides, 1):
-        y = height - 50
-        c.setFont('Helvetica-Bold', 18); c.drawString(45, y, f'Slide {idx}'); y -= 30
-        c.setFont('Helvetica', 11)
-        for shape in slide.shapes:
-            if hasattr(shape, 'text') and shape.text:
-                for line in shape.text.splitlines():
-                    for chunk in [line[i:i+90] for i in range(0, len(line), 90)] or ['']:
-                        c.drawString(45, y, chunk); y -= 15
-                        if y < 45:
-                            c.showPage(); c.setFont('Helvetica', 11); y = height - 50
-        c.showPage()
-    c.save()
-    return send(out, out.name)
+        return jsonify(error='python-pptx not installed. Run: pip install python-pptx'), 400
+
+    try:
+        from pptx.util import Emu
+        from pptx.dml.color import RGBColor
+        import math
+
+        prs = Presentation(str(ppt))
+
+        # Slide dimensions in pixels (96 dpi)
+        DPI = 150
+        EMU_PER_INCH = 914400
+
+        slide_w_emu = prs.slide_width   # EMU
+        slide_h_emu = prs.slide_height
+
+        slide_w_px = int(slide_w_emu / EMU_PER_INCH * DPI)
+        slide_h_px = int(slide_h_emu / EMU_PER_INCH * DPI)
+
+        slide_images = []
+
+        def emu_to_px(emu):
+            return int(emu / EMU_PER_INCH * DPI)
+
+        def get_rgb(color_obj):
+            """Try to extract (R, G, B) from a pptx color object."""
+            try:
+                if color_obj and color_obj.type is not None:
+                    rgb = color_obj.rgb
+                    return (rgb.red, rgb.green, rgb.blue)
+            except Exception:
+                pass
+            return None
+
+        for slide_idx, slide in enumerate(prs.slides):
+            # --- Background ---
+            bg_color = (255, 255, 255)  # default white
+            try:
+                bg = slide.background
+                fill = bg.fill
+                fill.fore_color  # access to trigger type detection
+                rgb = get_rgb(fill.fore_color)
+                if rgb:
+                    bg_color = rgb
+            except Exception:
+                pass
+
+            slide_img = Image.new('RGB', (slide_w_px, slide_h_px), bg_color)
+            draw = ImageDraw.Draw(slide_img)
+
+            # Sort shapes by z-order (index in shapes list)
+            for shape in slide.shapes:
+                try:
+                    left   = emu_to_px(shape.left   or 0)
+                    top    = emu_to_px(shape.top    or 0)
+                    width  = emu_to_px(shape.width  or 0)
+                    height = emu_to_px(shape.height or 0)
+
+                    # --- Picture / Image shapes ---
+                    if shape.shape_type == 13:  # MSO_SHAPE_TYPE.PICTURE
+                        try:
+                            img_data = shape.image.blob
+                            img_pil = Image.open(io.BytesIO(img_data)).convert('RGBA')
+                            img_pil = img_pil.resize((max(1, width), max(1, height)), Image.LANCZOS)
+                            # Paste with alpha mask if available
+                            if img_pil.mode == 'RGBA':
+                                slide_img.paste(img_pil, (left, top), img_pil.split()[3])
+                            else:
+                                slide_img.paste(img_pil, (left, top))
+                        except Exception:
+                            pass
+
+                    # --- Shape fill (rectangles, etc.) ---
+                    try:
+                        fill = shape.fill
+                        fill_type = fill.type
+                        if fill_type is not None:
+                            rgb = get_rgb(fill.fore_color)
+                            if rgb:
+                                draw.rectangle(
+                                    [left, top, left + width, top + height],
+                                    fill=rgb
+                                )
+                    except Exception:
+                        pass
+
+                    # --- Text frames ---
+                    if hasattr(shape, 'text_frame') and shape.text_frame:
+                        tf = shape.text_frame
+                        text_y = top + 4
+                        for para in tf.paragraphs:
+                            line_parts = []
+                            para_font_size = 14  # default pt
+                            para_color = (0, 0, 0)
+                            para_bold = False
+
+                            for run in para.runs:
+                                rtext = run.text
+                                if not rtext:
+                                    continue
+                                # Font size
+                                try:
+                                    if run.font.size:
+                                        para_font_size = max(6, int(run.font.size / 12700))  # EMU to pt
+                                except Exception:
+                                    pass
+                                # Font color
+                                try:
+                                    rgb = get_rgb(run.font.color)
+                                    if rgb:
+                                        para_color = rgb
+                                except Exception:
+                                    pass
+                                # Bold
+                                try:
+                                    if run.font.bold:
+                                        para_bold = True
+                                except Exception:
+                                    pass
+                                line_parts.append(rtext)
+
+                            full_line = ''.join(line_parts)
+                            if not full_line and not para.text:
+                                text_y += int(para_font_size * DPI / 72 * 0.5)
+                                continue
+                            if not full_line:
+                                full_line = para.text
+
+                            # Scale font size from pt to px at current DPI
+                            font_px = max(8, int(para_font_size * DPI / 72))
+
+                            # Try to load a font; fall back to default
+                            font = None
+                            try:
+                                font_paths = [
+                                    '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf' if para_bold else '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+                                    '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf' if para_bold else '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
+                                    'C:/Windows/Fonts/arialbd.ttf' if para_bold else 'C:/Windows/Fonts/arial.ttf',
+                                    'C:/Windows/Fonts/calibrib.ttf' if para_bold else 'C:/Windows/Fonts/calibri.ttf',
+                                ]
+                                for fp in font_paths:
+                                    if os.path.exists(fp):
+                                        font = ImageFont.truetype(fp, font_px)
+                                        break
+                            except Exception:
+                                pass
+
+                            if font is None:
+                                try:
+                                    font = ImageFont.load_default()
+                                except Exception:
+                                    font = None
+
+                            # Word-wrap within shape width
+                            words = full_line.split()
+                            lines_wrapped = []
+                            current = ''
+                            for word in words:
+                                test = (current + ' ' + word).strip()
+                                try:
+                                    bbox = draw.textbbox((0, 0), test, font=font)
+                                    tw = bbox[2] - bbox[0]
+                                except Exception:
+                                    tw = len(test) * font_px * 0.6
+                                if tw <= max(1, width - 8):
+                                    current = test
+                                else:
+                                    if current:
+                                        lines_wrapped.append(current)
+                                    current = word
+                            if current:
+                                lines_wrapped.append(current)
+                            if not lines_wrapped:
+                                lines_wrapped = [full_line]
+
+                            for wline in lines_wrapped:
+                                if text_y + font_px > top + height + font_px * 2:
+                                    break
+                                try:
+                                    draw.text((left + 4, text_y), wline, fill=para_color, font=font)
+                                except Exception:
+                                    draw.text((left + 4, text_y), wline, fill=para_color)
+                                text_y += int(font_px * 1.25)
+
+                            text_y += int(para_font_size * DPI / 72 * 0.15)  # para spacing
+
+                except Exception:
+                    continue  # skip broken shapes
+
+            slide_images.append(slide_img)
+
+        if not slide_images:
+            return jsonify(error='No slides found in the presentation.'), 400
+
+        # Save all slide images as a single PDF
+        slide_images[0].save(
+            str(out),
+            format='PDF',
+            save_all=True,
+            append_images=slide_images[1:],
+            resolution=DPI
+        )
+
+        return send(out, out.name)
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify(error=f'PowerPoint to PDF conversion failed: {str(e)}'), 500
 
 @app.post('/api/excel-to-pdf')
 def excel_to_pdf():
@@ -1904,6 +2101,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
