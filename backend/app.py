@@ -1106,17 +1106,18 @@ def ppt_to_pdf():
         return jsonify(error='python-pptx not installed. Run: pip install python-pptx'), 400
 
     try:
+        import gc
         prs = Presentation(str(ppt))
 
-        # Reduced to 72 to save RAM on Render Free Tier
-        DPI = 72
+        # Reduced to 60 to save RAM on Render Free Tier and prevent OOM
+        DPI = 60
         EMU_PER_INCH = 914400
 
         slide_w_px = int(prs.slide_width  / EMU_PER_INCH * DPI)
         slide_h_px = int(prs.slide_height / EMU_PER_INCH * DPI)
 
         # Cap max dimensions to prevent OOM crash on abnormally large slides
-        MAX_DIM = 1200
+        MAX_DIM = 1000
         if slide_w_px > MAX_DIM or slide_h_px > MAX_DIM:
             scale = MAX_DIM / max(slide_w_px, slide_h_px)
             slide_w_px = int(slide_w_px * scale)
@@ -1495,6 +1496,8 @@ def ppt_to_pdf():
             # Clear memory
             del slide_img
             del draw_ctx
+            import gc
+            gc.collect()
 
         if not tmp_pdfs:
             return jsonify(error='No slides found in the presentation.'), 400
@@ -2332,6 +2335,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
