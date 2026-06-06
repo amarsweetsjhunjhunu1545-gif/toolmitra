@@ -19,6 +19,36 @@ async function fetchWithTimeout(url, options={}, timeoutMs=180000){
   }
 }
 
+// Wake up Render server if sleeping, then retry the request
+async function fetchWithWakeup(url, options={}, statusEl=null, timeoutMs=240000){
+  // First attempt
+  try {
+    const res = await fetchWithTimeout(url, options, timeoutMs);
+    return res;
+  } catch(firstErr) {
+    // Network/CORS error = server likely sleeping → wake it up
+    const isNetworkErr = (firstErr.name === 'TypeError' || firstErr.message.toLowerCase().includes('fetch') || firstErr.message.toLowerCase().includes('network') || firstErr.message.toLowerCase().includes('failed'));
+    if(!isNetworkErr) throw firstErr;
+
+    // Show wakeup message
+    if(statusEl) statusEl.textContent = '⏳ Server start ho raha hai... 30-60 seconds wait karo, phir automatic retry hoga.';
+    const processingText = document.getElementById('processingText');
+    if(processingText) processingText.textContent = '⏳ Server start ho raha hai... 30-60 seconds wait karo.';
+
+    // Ping server health endpoint to wake it up (fire and forget)
+    try { fetch(API + '/api/health', {mode:'cors', cache:'no-store'}); } catch(e){}
+
+    // Wait 35 seconds for server to wake up
+    await new Promise(r => setTimeout(r, 35000));
+
+    if(statusEl) statusEl.textContent = '🔄 Server ready, ab retry ho raha hai...';
+    if(processingText) processingText.textContent = '🔄 Server ready, processing your file...';
+
+    // Retry
+    return await fetchWithTimeout(url, options, timeoutMs);
+  }
+}
+
 async function downloadBlobMobileFriendly(blob, filename){
   filename = safeFileName(filename);
   const nav = window.navigator;
@@ -287,7 +317,7 @@ document.getElementById('toolForm').addEventListener('submit',async ev=>{
       return;
     }
 
-    const res=await fetchWithTimeout(API+current.e,{method:'POST',body:fd}, 240000);
+    const res=await fetchWithWakeup(API+current.e,{method:'POST',body:fd}, st, 240000);
     if(!res.ok){let j=await res.json().catch(()=>({error:'Tool error'}));throw new Error(j.error||'Something went wrong')}
     const blob=await res.blob();
     if(!blob || blob.size===0) throw new Error('Empty file received from server');
@@ -336,5 +366,6 @@ const editor = {
   tool:'select', color:'#111827', size:24, stroke:3, history:[], currentFile:null
 };
 function libReady(){ return window.pdfjsLib && window.fabric && window.jspdf; }
+
 
 
