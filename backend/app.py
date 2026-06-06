@@ -534,7 +534,9 @@ def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
                 libre_exe = p
                 break
     else:
-        for cmd in ['libreoffice', 'soffice', '/usr/bin/libreoffice', '/usr/bin/soffice', '/usr/lib/libreoffice/program/soffice', '/usr/bin/soffice.bin']:
+        for cmd in ['libreoffice', 'soffice', '/usr/bin/libreoffice', '/usr/bin/soffice',
+                    '/usr/lib/libreoffice/program/soffice', '/usr/bin/soffice.bin',
+                    '/snap/bin/libreoffice']:
             if shutil.which(cmd):
                 libre_exe = shutil.which(cmd)
                 break
@@ -544,32 +546,40 @@ def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
         
     if libre_exe:
         try:
+            tmp_profile = tempfile.mkdtemp(prefix='lo_profile_')
             env = os.environ.copy()
             if os.name != 'nt':
-                tmp_home = tempfile.mkdtemp()
-                env['HOME'] = tmp_home
-                
+                env['HOME'] = tmp_profile
+                env['DISPLAY'] = env.get('DISPLAY', ':99')
+                env['TMPDIR'] = tmp_profile
+
+            # Use isolated UserInstallation to avoid lock conflicts on server
+            user_install = f'file://{tmp_profile}'
             cmd = [
-                libre_exe, 
-                '--headless', 
+                libre_exe,
+                f'-env:UserInstallation={user_install}',
+                '--headless',
                 '--invisible',
                 '--nologo',
                 '--nodefault',
                 '--nofirststartwizard',
-                '--convert-to', 'pdf', 
-                '--outdir', output_dir, 
+                '--convert-to', 'pdf',
+                '--outdir', output_dir,
                 input_str
             ]
             
-            subprocess.check_call(cmd, env=env, timeout=180)
+            subprocess.check_call(
+                cmd, env=env, timeout=180,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
             
             expected_out = Path(output_dir) / (Path(input_str).stem + '.pdf')
-            if expected_out.exists():
-                if expected_out != Path(output_path):
+            if expected_out.exists() and expected_out.stat().st_size > 0:
+                if str(expected_out) != output_str:
                     shutil.move(str(expected_out), output_str)
                 return True
             else:
-                raise Exception("LibreOffice executed but PDF was not created.")
+                raise Exception("LibreOffice ran but PDF not created.")
         except Exception as e:
             raise Exception(f"LibreOffice conversion failed: {str(e)}")
             
@@ -1083,211 +1093,381 @@ def ppt_to_pdf():
     except Exception:
         pass  # fallback to image-based rendering below
 
-    # --- Method 2: python-pptx → slide images → PDF (layout-preserving fallback) ---
+    # --- Method 2: python-pptx → high-quality slide images → PDF ---
     if Presentation is None:
         return jsonify(error='python-pptx not installed. Run: pip install python-pptx'), 400
 
     try:
-        from pptx.util import Emu
-        from pptx.dml.color import RGBColor
-        import math
-
         prs = Presentation(str(ppt))
 
-        # Slide dimensions in pixels (96 dpi)
-        DPI = 150
+        DPI = 200
         EMU_PER_INCH = 914400
 
-        slide_w_emu = prs.slide_width   # EMU
-        slide_h_emu = prs.slide_height
-
-        slide_w_px = int(slide_w_emu / EMU_PER_INCH * DPI)
-        slide_h_px = int(slide_h_emu / EMU_PER_INCH * DPI)
+        slide_w_px = int(prs.slide_width  / EMU_PER_INCH * DPI)
+        slide_h_px = int(prs.slide_height / EMU_PER_INCH * DPI)
 
         slide_images = []
 
-        def emu_to_px(emu):
-            return int(emu / EMU_PER_INCH * DPI)
+        def e2p(emu):
+            return int((emu or 0) / EMU_PER_INCH * DPI)
 
-        def get_rgb(color_obj):
-            """Try to extract (R, G, B) from a pptx color object."""
+        # ── Font loader (cached) ──────────────────────────────────────────
+        _font_cache = {}
+        FONT_DIRS = [
+            '/usr/share/fonts/truetype/dejavu',
+            '/usr/share/fonts/truetype/liberation',
+            '/usr/share/fonts/truetype/noto',
+            '/usr/share/fonts/truetype/freefont',
+            '/usr/share/fonts',
+            'C:/Windows/Fonts',
+        ]
+        FONT_NAMES = {
+            (True,  True):  ['DejaVuSans-Bold', 'LiberationSans-Bold', 'FreeSansBold', 'arialbd', 'calibrib'],
+            (True,  False): ['DejaVuSans-Oblique', 'LiberationSans-Italic', 'FreeSansOblique', 'ariali', 'calibrii'],
+            (False, True):  ['DejaVuSans-Bold', 'LiberationSans-Bold', 'FreeSansBold', 'arialbd', 'calibrib'],
+            (False, False): ['DejaVuSans', 'LiberationSans-Regular', 'FreeSans', 'arial', 'calibri'],
+        }
+
+        def load_font(size_px, bold=False, italic=False):
+            key = (size_px, bold, italic)
+            if key in _font_cache:
+                return _font_cache[key]
+            names = FONT_NAMES.get((italic, bold), FONT_NAMES[(False, False)])
+            for name in names:
+                for d in FONT_DIRS:
+                    for ext in ['.ttf', '.TTF', '.otf']:
+                        fp = os.path.join(d, name + ext)
+                        if os.path.exists(fp):
+                            try:
+                                f = ImageFont.truetype(fp, max(8, size_px))
+                                _font_cache[key] = f
+                                return f
+                            except Exception:
+                                pass
+            try:
+                f = ImageFont.load_default()
+            except Exception:
+                f = None
+            _font_cache[key] = f
+            return f
+
+        # ── Color extractor ───────────────────────────────────────────────
+        def get_rgb(color_obj, default=None):
             try:
                 if color_obj and color_obj.type is not None:
-                    rgb = color_obj.rgb
-                    return (rgb.red, rgb.green, rgb.blue)
+                    c = color_obj.rgb
+                    return (c.red, c.green, c.blue)
             except Exception:
                 pass
-            return None
+            return default
 
-        for slide_idx, slide in enumerate(prs.slides):
-            # --- Background ---
-            bg_color = (255, 255, 255)  # default white
+        # ── Background renderer (slide → layout → master chain) ───────────
+        def render_background(slide, img, drw):
+            # Try each level: slide, slide_layout, slide_master
+            for elem in [slide, slide.slide_layout, slide.slide_layout.slide_master]:
+                try:
+                    bg   = elem.background
+                    fill = bg.fill
+                    ftype = fill.type
+                    if ftype is None:
+                        continue
+                    # Solid fill
+                    rgb = get_rgb(fill.fore_color)
+                    if rgb:
+                        drw.rectangle([0, 0, slide_w_px, slide_h_px], fill=rgb)
+                        return
+                    # Gradient → use first stop color as approximation
+                    try:
+                        stops = fill.gradient_stops
+                        if stops:
+                            rgb = get_rgb(stops[0].color)
+                            rgb2 = get_rgb(stops[-1].color)
+                            if rgb and rgb2:
+                                # Draw simple top-to-bottom gradient
+                                for y in range(slide_h_px):
+                                    t = y / max(slide_h_px - 1, 1)
+                                    r = int(rgb[0] + (rgb2[0] - rgb[0]) * t)
+                                    g = int(rgb[1] + (rgb2[1] - rgb[1]) * t)
+                                    b = int(rgb[2] + (rgb2[2] - rgb[2]) * t)
+                                    drw.line([(0, y), (slide_w_px, y)], fill=(r, g, b))
+                                return
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+            # Check for background image in slide XML (blipFill)
+            try:
+                from pptx.oxml.ns import qn
+                for elem in [slide, slide.slide_layout, slide.slide_layout.slide_master]:
+                    bg_elem = elem.background._element
+                    blip = bg_elem.find('.//' + qn('a:blip'))
+                    if blip is not None:
+                        rId = blip.get(qn('r:embed'))
+                        if rId:
+                            part = elem.part.related_parts.get(rId)
+                            if part:
+                                bg_img = Image.open(io.BytesIO(part.blob)).convert('RGB')
+                                bg_img = bg_img.resize((slide_w_px, slide_h_px), Image.LANCZOS)
+                                img.paste(bg_img, (0, 0))
+                                return
+            except Exception:
+                pass
+
+        # ── Shape renderer ────────────────────────────────────────────────
+        def render_shape(shape, img, drw):
+            try:
+                left   = e2p(shape.left)
+                top    = e2p(shape.top)
+                width  = e2p(shape.width)
+                height = e2p(shape.height)
+                right  = left + width
+                bottom = top  + height
+
+                # GROUP shape — recurse into children
+                if shape.shape_type == 6:
+                    try:
+                        for child in shape.shapes:
+                            render_shape(child, img, drw)
+                    except Exception:
+                        pass
+                    return
+
+                # PICTURE
+                if shape.shape_type == 13:
+                    try:
+                        blob = shape.image.blob
+                        im   = Image.open(io.BytesIO(blob)).convert('RGBA')
+                        im   = im.resize((max(1, width), max(1, height)), Image.LANCZOS)
+                        mask = im.split()[3] if im.mode == 'RGBA' else None
+                        img.paste(im.convert('RGB'), (left, top), mask)
+                    except Exception:
+                        pass
+                    return
+
+                # SHAPE FILL
+                try:
+                    fill  = shape.fill
+                    ftype = fill.type
+                    if ftype is not None:
+                        rgb = get_rgb(fill.fore_color)
+                        if rgb:
+                            drw.rectangle([left, top, right, bottom], fill=rgb)
+                        else:
+                            # gradient: draw approximate
+                            try:
+                                stops = fill.gradient_stops
+                                if stops and len(stops) >= 2:
+                                    c1 = get_rgb(stops[0].color,  (200, 200, 255))
+                                    c2 = get_rgb(stops[-1].color, (100, 100, 200))
+                                    for y in range(top, bottom):
+                                        t = (y - top) / max(bottom - top - 1, 1)
+                                        r = int(c1[0] + (c2[0] - c1[0]) * t)
+                                        g = int(c1[1] + (c2[1] - c1[1]) * t)
+                                        b = int(c1[2] + (c2[2] - c1[2]) * t)
+                                        drw.line([(left, y), (right, y)], fill=(r, g, b))
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+                # SHAPE OUTLINE
+                try:
+                    ln = shape.line
+                    if ln and ln.color and ln.color.type is not None:
+                        lrgb = get_rgb(ln.color)
+                        lw   = max(1, e2p(ln.width or 9525))
+                        if lrgb:
+                            drw.rectangle([left, top, right, bottom], outline=lrgb, width=lw)
+                except Exception:
+                    pass
+
+                # TABLE
+                if shape.shape_type == 19:
+                    try:
+                        tbl = shape.table
+                        rows = tbl.rows
+                        cols = tbl.columns
+                        if rows and cols:
+                            row_h = height // max(len(rows), 1)
+                            col_w = width  // max(len(cols), 1)
+                            for ri, row in enumerate(rows):
+                                for ci, cell in enumerate(row.cells):
+                                    cx = left + ci * col_w
+                                    cy = top  + ri * row_h
+                                    # Cell fill
+                                    try:
+                                        cfill = cell.fill
+                                        if cfill.type is not None:
+                                            crgb = get_rgb(cfill.fore_color)
+                                            if crgb:
+                                                drw.rectangle([cx, cy, cx+col_w, cy+row_h], fill=crgb)
+                                    except Exception:
+                                        pass
+                                    # Cell border
+                                    drw.rectangle([cx, cy, cx+col_w, cy+row_h], outline=(180,180,180), width=1)
+                                    # Cell text
+                                    try:
+                                        cell_text = cell.text_frame.text
+                                        if cell_text:
+                                            fnt = load_font(max(8, int(11 * DPI / 72)))
+                                            drw.text((cx+3, cy+3), cell_text[:40], fill=(0,0,0), font=fnt)
+                                    except Exception:
+                                        pass
+                    except Exception:
+                        pass
+                    return
+
+                # TEXT FRAME
+                if hasattr(shape, 'text_frame') and shape.text_frame:
+                    tf    = shape.text_frame
+                    text_y = top + 4
+
+                    for para in tf.paragraphs:
+                        # Para-level defaults
+                        p_size  = 14
+                        p_color = (0, 0, 0)
+                        p_bold  = False
+                        p_italic= False
+
+                        # Try para-level font
+                        try:
+                            if para.font and para.font.size:
+                                p_size = max(6, int(para.font.size / 12700))
+                            if para.font:
+                                clr = get_rgb(para.font.color)
+                                if clr: p_color = clr
+                                if para.font.bold:   p_bold   = True
+                                if para.font.italic: p_italic = True
+                        except Exception:
+                            pass
+
+                        # Build text from runs
+                        run_texts = []
+                        for run in para.runs:
+                            rt = run.text or ''
+                            if not rt: continue
+                            try:
+                                if run.font.size:
+                                    p_size = max(6, int(run.font.size / 12700))
+                            except Exception: pass
+                            try:
+                                clr = get_rgb(run.font.color)
+                                if clr: p_color = clr
+                            except Exception: pass
+                            try:
+                                if run.font.bold:   p_bold   = True
+                                if run.font.italic: p_italic = True
+                            except Exception: pass
+                            run_texts.append(rt)
+
+                        full_line = ''.join(run_texts)
+                        if not full_line:
+                            full_line = para.text or ''
+                        if not full_line:
+                            text_y += int(p_size * DPI / 72 * 0.4)
+                            continue
+
+                        font_px = max(8, int(p_size * DPI / 72))
+                        fnt     = load_font(font_px, bold=p_bold, italic=p_italic)
+
+                        # Para alignment horizontal offset
+                        try:
+                            from pptx.enum.text import PP_ALIGN
+                            align = para.alignment
+                        except Exception:
+                            align = None
+
+                        # Word-wrap
+                        words = full_line.split()
+                        wrapped = []
+                        cur = ''
+                        for w in words:
+                            test = (cur + ' ' + w).strip()
+                            try:
+                                bbox = drw.textbbox((0, 0), test, font=fnt)
+                                tw = bbox[2] - bbox[0]
+                            except Exception:
+                                tw = len(test) * font_px * 0.55
+                            if tw <= max(1, width - 8):
+                                cur = test
+                            else:
+                                if cur: wrapped.append(cur)
+                                cur = w
+                        if cur: wrapped.append(cur)
+                        if not wrapped: wrapped = [full_line]
+
+                        for wl in wrapped:
+                            if text_y + font_px > bottom + font_px * 2:
+                                break
+                            try:
+                                # Horizontal alignment
+                                tx = left + 4
+                                try:
+                                    from pptx.enum.text import PP_ALIGN
+                                    bbox = drw.textbbox((0, 0), wl, font=fnt)
+                                    lw2 = bbox[2] - bbox[0]
+                                    if align == PP_ALIGN.CENTER:
+                                        tx = left + max(0, (width - lw2) // 2)
+                                    elif align == PP_ALIGN.RIGHT:
+                                        tx = left + max(0, width - lw2 - 4)
+                                except Exception:
+                                    pass
+                                drw.text((tx, text_y), wl, fill=p_color, font=fnt)
+                            except Exception:
+                                drw.text((left + 4, text_y), wl, fill=p_color)
+                            text_y += int(font_px * 1.3)
+
+                        text_y += int(p_size * DPI / 72 * 0.15)
+
+            except Exception:
+                pass  # skip broken shapes
+
+        # ── Render each slide ─────────────────────────────────────────────
+        for slide in prs.slides:
+            bg_color = (255, 255, 255)
+            # Quick solid bg from slide itself
             try:
                 bg = slide.background
                 fill = bg.fill
-                fill.fore_color  # access to trigger type detection
                 rgb = get_rgb(fill.fore_color)
-                if rgb:
-                    bg_color = rgb
+                if rgb: bg_color = rgb
             except Exception:
                 pass
 
             slide_img = Image.new('RGB', (slide_w_px, slide_h_px), bg_color)
-            draw = ImageDraw.Draw(slide_img)
+            draw_ctx  = ImageDraw.Draw(slide_img)
 
-            # Sort shapes by z-order (index in shapes list)
-            for shape in slide.shapes:
-                try:
-                    left   = emu_to_px(shape.left   or 0)
-                    top    = emu_to_px(shape.top    or 0)
-                    width  = emu_to_px(shape.width  or 0)
-                    height = emu_to_px(shape.height or 0)
+            # Render background (fills / images from master/layout chain)
+            render_background(slide, slide_img, draw_ctx)
 
-                    # --- Picture / Image shapes ---
-                    if shape.shape_type == 13:  # MSO_SHAPE_TYPE.PICTURE
-                        try:
-                            img_data = shape.image.blob
-                            img_pil = Image.open(io.BytesIO(img_data)).convert('RGBA')
-                            img_pil = img_pil.resize((max(1, width), max(1, height)), Image.LANCZOS)
-                            # Paste with alpha mask if available
-                            if img_pil.mode == 'RGBA':
-                                slide_img.paste(img_pil, (left, top), img_pil.split()[3])
-                            else:
-                                slide_img.paste(img_pil, (left, top))
-                        except Exception:
-                            pass
-
-                    # --- Shape fill (rectangles, etc.) ---
-                    try:
-                        fill = shape.fill
-                        fill_type = fill.type
-                        if fill_type is not None:
-                            rgb = get_rgb(fill.fore_color)
-                            if rgb:
-                                draw.rectangle(
-                                    [left, top, left + width, top + height],
-                                    fill=rgb
-                                )
-                    except Exception:
-                        pass
-
-                    # --- Text frames ---
-                    if hasattr(shape, 'text_frame') and shape.text_frame:
-                        tf = shape.text_frame
-                        text_y = top + 4
-                        for para in tf.paragraphs:
-                            line_parts = []
-                            para_font_size = 14  # default pt
-                            para_color = (0, 0, 0)
-                            para_bold = False
-
-                            for run in para.runs:
-                                rtext = run.text
-                                if not rtext:
-                                    continue
-                                # Font size
-                                try:
-                                    if run.font.size:
-                                        para_font_size = max(6, int(run.font.size / 12700))  # EMU to pt
-                                except Exception:
-                                    pass
-                                # Font color
-                                try:
-                                    rgb = get_rgb(run.font.color)
-                                    if rgb:
-                                        para_color = rgb
-                                except Exception:
-                                    pass
-                                # Bold
-                                try:
-                                    if run.font.bold:
-                                        para_bold = True
-                                except Exception:
-                                    pass
-                                line_parts.append(rtext)
-
-                            full_line = ''.join(line_parts)
-                            if not full_line and not para.text:
-                                text_y += int(para_font_size * DPI / 72 * 0.5)
-                                continue
-                            if not full_line:
-                                full_line = para.text
-
-                            # Scale font size from pt to px at current DPI
-                            font_px = max(8, int(para_font_size * DPI / 72))
-
-                            # Try to load a font; fall back to default
-                            font = None
-                            try:
-                                font_paths = [
-                                    '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf' if para_bold else '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-                                    '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf' if para_bold else '/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf',
-                                    'C:/Windows/Fonts/arialbd.ttf' if para_bold else 'C:/Windows/Fonts/arial.ttf',
-                                    'C:/Windows/Fonts/calibrib.ttf' if para_bold else 'C:/Windows/Fonts/calibri.ttf',
-                                ]
-                                for fp in font_paths:
-                                    if os.path.exists(fp):
-                                        font = ImageFont.truetype(fp, font_px)
-                                        break
-                            except Exception:
-                                pass
-
-                            if font is None:
-                                try:
-                                    font = ImageFont.load_default()
-                                except Exception:
-                                    font = None
-
-                            # Word-wrap within shape width
-                            words = full_line.split()
-                            lines_wrapped = []
-                            current = ''
-                            for word in words:
-                                test = (current + ' ' + word).strip()
-                                try:
-                                    bbox = draw.textbbox((0, 0), test, font=font)
-                                    tw = bbox[2] - bbox[0]
-                                except Exception:
-                                    tw = len(test) * font_px * 0.6
-                                if tw <= max(1, width - 8):
-                                    current = test
-                                else:
-                                    if current:
-                                        lines_wrapped.append(current)
-                                    current = word
-                            if current:
-                                lines_wrapped.append(current)
-                            if not lines_wrapped:
-                                lines_wrapped = [full_line]
-
-                            for wline in lines_wrapped:
-                                if text_y + font_px > top + height + font_px * 2:
-                                    break
-                                try:
-                                    draw.text((left + 4, text_y), wline, fill=para_color, font=font)
-                                except Exception:
-                                    draw.text((left + 4, text_y), wline, fill=para_color)
-                                text_y += int(font_px * 1.25)
-
-                            text_y += int(para_font_size * DPI / 72 * 0.15)  # para spacing
-
-                except Exception:
-                    continue  # skip broken shapes
+            # Render master placeholders (logos, branding)
+            try:
+                for sp in slide.slide_layout.slide_master.shapes:
+                    render_shape(sp, slide_img, draw_ctx)
+            except Exception:
+                pass
+            # Render layout placeholders
+            try:
+                for sp in slide.slide_layout.shapes:
+                    render_shape(sp, slide_img, draw_ctx)
+            except Exception:
+                pass
+            # Render actual slide shapes
+            for sp in slide.shapes:
+                render_shape(sp, slide_img, draw_ctx)
 
             slide_images.append(slide_img)
 
         if not slide_images:
             return jsonify(error='No slides found in the presentation.'), 400
 
-        # Save all slide images as a single PDF
         slide_images[0].save(
-            str(out),
-            format='PDF',
+            str(out), format='PDF',
             save_all=True,
             append_images=slide_images[1:],
             resolution=DPI
         )
-
         return send(out, out.name)
 
     except Exception as e:
@@ -2101,6 +2281,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
