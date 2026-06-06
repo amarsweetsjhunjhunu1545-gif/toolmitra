@@ -1087,11 +1087,13 @@ def ppt_to_pdf():
     out = OUTPUTS / (Path(original).stem + '_converted.pdf')
 
     # --- Method 1: LibreOffice / Windows COM (best quality, full fidelity) ---
-    try:
-        if _convert_office_to_pdf(ppt, out, 'powerpoint'):
-            return send(out, out.name)
-    except Exception:
-        pass  # fallback to image-based rendering below
+    # Disabled LibreOffice on Linux (Render) to prevent OOM (Out Of Memory) crashes
+    if os.name == 'nt':
+        try:
+            if _convert_office_to_pdf(ppt, out, 'powerpoint'):
+                return send(out, out.name)
+        except Exception:
+            pass  # fallback to image-based rendering below
 
     # --- Method 2: python-pptx → high-quality slide images → PDF ---
     if Presentation is None:
@@ -1100,7 +1102,8 @@ def ppt_to_pdf():
     try:
         prs = Presentation(str(ppt))
 
-        DPI = 200
+        # Reduced from 200 to 120 to save RAM on Render Free Tier
+        DPI = 120
         EMU_PER_INCH = 914400
 
         slide_w_px = int(prs.slide_width  / EMU_PER_INCH * DPI)
@@ -1472,7 +1475,9 @@ def ppt_to_pdf():
 
     except Exception as e:
         traceback.print_exc()
-        return jsonify(error=f'PowerPoint to PDF conversion failed: {str(e)}'), 500
+        resp = jsonify(error=f'PowerPoint conversion error: {str(e)}')
+        resp.headers['Access-Control-Allow-Origin'] = '*'
+        return resp, 500
 
 @app.post('/api/excel-to-pdf')
 def excel_to_pdf():
@@ -2281,6 +2286,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
