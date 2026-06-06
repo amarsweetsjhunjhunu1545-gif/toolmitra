@@ -5,3 +5,5 @@ libreoffice
 fonts-noto-core
 fonts-noto-extra
 fonts-lohit-deva
+fonts-dejavu-core
+fonts-liberation
