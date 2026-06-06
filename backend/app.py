@@ -1109,6 +1109,14 @@ def ppt_to_pdf():
         slide_w_px = int(prs.slide_width  / EMU_PER_INCH * DPI)
         slide_h_px = int(prs.slide_height / EMU_PER_INCH * DPI)
 
+        # Cap max dimensions to prevent OOM crash on abnormally large slides
+        MAX_DIM = 2500
+        if slide_w_px > MAX_DIM or slide_h_px > MAX_DIM:
+            scale = MAX_DIM / max(slide_w_px, slide_h_px)
+            slide_w_px = int(slide_w_px * scale)
+            slide_h_px = int(slide_h_px * scale)
+            DPI = int(DPI * scale)
+
         slide_images = []
 
         def e2p(emu):
@@ -1241,7 +1249,10 @@ def ppt_to_pdf():
                     try:
                         blob = shape.image.blob
                         im   = Image.open(io.BytesIO(blob)).convert('RGBA')
-                        im   = im.resize((max(1, width), max(1, height)), Image.LANCZOS)
+                        # Cap resize dimensions to prevent OOM
+                        rw = min(max(1, width), MAX_DIM * 2)
+                        rh = min(max(1, height), MAX_DIM * 2)
+                        im   = im.resize((rw, rh), Image.LANCZOS)
                         mask = im.split()[3] if im.mode == 'RGBA' else None
                         img.paste(im.convert('RGB'), (left, top), mask)
                     except Exception:
@@ -1427,6 +1438,10 @@ def ppt_to_pdf():
                 pass  # skip broken shapes
 
         # ── Render each slide ─────────────────────────────────────────────
+        import tempfile
+        from pypdf import PdfWriter, PdfReader
+        
+        tmp_pdfs = []
         for slide in prs.slides:
             bg_color = (255, 255, 255)
             # Quick solid bg from slide itself
@@ -1460,17 +1475,37 @@ def ppt_to_pdf():
             for sp in slide.shapes:
                 render_shape(sp, slide_img, draw_ctx)
 
-            slide_images.append(slide_img)
+            # Save slide to a temporary PDF to save RAM
+            fd, tmp_path = tempfile.mkstemp(suffix='.pdf')
+            os.close(fd)
+            slide_img.save(tmp_path, format='PDF', resolution=DPI)
+            tmp_pdfs.append(tmp_path)
+            
+            # Clear memory
+            del slide_img
+            del draw_ctx
 
-        if not slide_images:
+        if not tmp_pdfs:
             return jsonify(error='No slides found in the presentation.'), 400
 
-        slide_images[0].save(
-            str(out), format='PDF',
-            save_all=True,
-            append_images=slide_images[1:],
-            resolution=DPI
-        )
+        # Merge all temporary PDFs
+        merger = PdfWriter()
+        for p in tmp_pdfs:
+            try:
+                merger.append(p)
+            except Exception:
+                pass
+                
+        merger.write(str(out))
+        merger.close()
+
+        # Cleanup temp files
+        for p in tmp_pdfs:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
         return send(out, out.name)
 
     except Exception as e:
@@ -2286,6 +2321,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
