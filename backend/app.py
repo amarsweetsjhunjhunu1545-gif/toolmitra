@@ -545,6 +545,7 @@ def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
                 break
         
     if libre_exe:
+        tmp_profile = None
         try:
             tmp_profile = tempfile.mkdtemp(prefix='lo_profile_')
             env = os.environ.copy()
@@ -582,6 +583,9 @@ def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
                 raise Exception("LibreOffice ran but PDF not created.")
         except Exception as e:
             raise Exception(f"LibreOffice conversion failed: {str(e)}")
+        finally:
+            if tmp_profile and os.path.exists(tmp_profile):
+                shutil.rmtree(tmp_profile, ignore_errors=True)
             
     # 2. Try Windows COM via PowerShell if LibreOffice not found
     if os.name == 'nt':
@@ -1087,13 +1091,11 @@ def ppt_to_pdf():
     out = OUTPUTS / (Path(original).stem + '_converted.pdf')
 
     # --- Method 1: LibreOffice / Windows COM (best quality, full fidelity) ---
-    # Disabled LibreOffice on Linux (Render) to prevent OOM (Out Of Memory) crashes
-    if os.name == 'nt':
-        try:
-            if _convert_office_to_pdf(ppt, out, 'powerpoint'):
-                return send(out, out.name)
-        except Exception:
-            pass  # fallback to image-based rendering below
+    try:
+        if _convert_office_to_pdf(ppt, out, 'powerpoint'):
+            return send(out, out.name)
+    except Exception:
+        pass  # fallback to image-based rendering below
 
     # --- Method 2: python-pptx → high-quality slide images → PDF ---
     if Presentation is None:
@@ -1102,15 +1104,15 @@ def ppt_to_pdf():
     try:
         prs = Presentation(str(ppt))
 
-        # Reduced from 200 to 120 to save RAM on Render Free Tier
-        DPI = 120
+        # Reduced to 72 to save RAM on Render Free Tier
+        DPI = 72
         EMU_PER_INCH = 914400
 
         slide_w_px = int(prs.slide_width  / EMU_PER_INCH * DPI)
         slide_h_px = int(prs.slide_height / EMU_PER_INCH * DPI)
 
         # Cap max dimensions to prevent OOM crash on abnormally large slides
-        MAX_DIM = 2500
+        MAX_DIM = 1200
         if slide_w_px > MAX_DIM or slide_h_px > MAX_DIM:
             scale = MAX_DIM / max(slide_w_px, slide_h_px)
             slide_w_px = int(slide_w_px * scale)
