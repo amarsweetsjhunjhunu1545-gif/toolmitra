@@ -1088,6 +1088,10 @@ def pdf_to_excel():
 @app.post('/api/ppt-to-pdf')
 def ppt_to_pdf():
     ppt, original = save_file('file')
+    size = ppt.stat().st_size
+    if size > 30 * 1024 * 1024:
+        return jsonify(error='PowerPoint file is too large for the free server (Max 30MB). Please upload a smaller file.'), 413
+
     out = OUTPUTS / (Path(original).stem + '_converted.pdf')
 
     # --- Method 1: LibreOffice / Windows COM (best quality, full fidelity) ---
@@ -2323,6 +2327,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
