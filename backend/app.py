@@ -1200,8 +1200,8 @@ def ppt_to_pdf():
                                 if line_buf:
                                     c_interim.drawString(x, y_pdf, line_buf)
                                     y_pdf -= font_size + 2
-                        except Exception:
-                            pass
+                    except Exception:
+                        pass
 
                 c_interim.showPage()
             c_interim.save()
@@ -2155,6 +2155,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
