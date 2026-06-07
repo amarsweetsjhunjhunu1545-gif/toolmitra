@@ -104,9 +104,7 @@ def too_large(e):
 def handle_all_errors(e):
     traceback.print_exc()
     msg = str(e) or 'Internal server error'
-    resp = jsonify(error=msg)
-    resp.headers['Access-Control-Allow-Origin'] = '*'
-    return resp, 500
+    return jsonify(error=msg), 500
 
 def uid(name='file'):
     return f"{uuid.uuid4().hex}_{secure_filename(name)}"
@@ -521,109 +519,11 @@ def page_numbers():
     with open(out,'wb') as fp: writer.write(fp)
     return send(out,out.name)
 
-def _convert_office_to_pdf(input_path, output_path, office_type='powerpoint'):
-    input_str = str(Path(input_path).resolve())
-    output_str = str(Path(output_path).resolve())
-    output_dir = str(Path(output_path).parent.resolve())
-    
-    # 1. Try LibreOffice
-    libre_exe = None
-    if os.name == 'nt':
-        for p in [r"C:\Program Files\LibreOffice\program\soffice.exe", r"C:\Program Files (x86)\LibreOffice\program\soffice.exe"]:
-            if os.path.exists(p):
-                libre_exe = p
-                break
-    else:
-        for cmd in ['libreoffice', 'soffice', '/usr/bin/libreoffice', '/usr/bin/soffice',
-                    '/usr/lib/libreoffice/program/soffice', '/usr/bin/soffice.bin',
-                    '/snap/bin/libreoffice']:
-            if shutil.which(cmd):
-                libre_exe = shutil.which(cmd)
-                break
-            elif os.path.exists(cmd):
-                libre_exe = cmd
-                break
-        
-    if libre_exe:
-        tmp_profile = None
-        try:
-            tmp_profile = tempfile.mkdtemp(prefix='lo_profile_')
-            env = os.environ.copy()
-            if os.name != 'nt':
-                env['HOME'] = tmp_profile
-                env['DISPLAY'] = env.get('DISPLAY', ':99')
-                env['TMPDIR'] = tmp_profile
-
-            # Use isolated UserInstallation to avoid lock conflicts on server
-            user_install = f'file://{tmp_profile}'
-            cmd = [
-                libre_exe,
-                f'-env:UserInstallation={user_install}',
-                '--headless',
-                '--invisible',
-                '--nologo',
-                '--nodefault',
-                '--nofirststartwizard',
-                '--convert-to', 'pdf',
-                '--outdir', output_dir,
-                input_str
-            ]
-            
-            subprocess.check_call(
-                cmd, env=env, timeout=180,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-            
-            expected_out = Path(output_dir) / (Path(input_str).stem + '.pdf')
-            if expected_out.exists() and expected_out.stat().st_size > 0:
-                if str(expected_out) != output_str:
-                    shutil.move(str(expected_out), output_str)
-                return True
-            else:
-                raise Exception("LibreOffice ran but PDF not created.")
-        except Exception as e:
-            raise Exception(f"LibreOffice conversion failed: {str(e)}")
-        finally:
-            if tmp_profile and os.path.exists(tmp_profile):
-                shutil.rmtree(tmp_profile, ignore_errors=True)
-            
-    # 2. Try Windows COM via PowerShell if LibreOffice not found
-    if os.name == 'nt':
-        try:
-            if office_type == 'powerpoint':
-                ps_script = f"$ppt = New-Object -ComObject PowerPoint.Application; $doc = $ppt.Presentations.Open('{input_str}', 2, 0, 0); $doc.SaveAs('{output_str}', 32); $doc.Close(); $ppt.Quit();"
-            elif office_type == 'word':
-                ps_script = f"$word = New-Object -ComObject Word.Application; $doc = $word.Documents.Open('{input_str}', $false, $true); $doc.SaveAs([ref]'{output_str}', [ref]17); $doc.Close(); $word.Quit();"
-            elif office_type == 'excel':
-                ps_script = f"$excel = New-Object -ComObject Excel.Application; $wb = $excel.Workbooks.Open('{input_str}'); $wb.ExportAsFixedFormat(0, '{output_str}'); $wb.Close($false); $excel.Quit();"
-            
-            subprocess.check_call(['powershell', '-NoProfile', '-Command', ps_script], timeout=120)
-            if Path(output_path).exists():
-                return True
-            else:
-                raise Exception("PowerShell COM executed but PDF was not created.")
-        except Exception as e:
-            raise Exception(f"PowerShell COM conversion failed: {str(e)}")
-
-    # If we are here, neither LibreOffice nor Windows COM is available
-    if os.name != 'nt':
-        debug_info = "Unknown"
-        try:
-            files = [f for f in os.listdir('/usr/bin') if 'office' in f.lower() or 'soffice' in f.lower()]
-            debug_info = f"Files: {files}, PATH: {os.environ.get('PATH')}"
-        except Exception as e:
-            debug_info = str(e)
-        raise Exception(f"Server par LibreOffice install nahi hai. Debug info: {debug_info}")
-    else:
-        raise Exception("Aapke Windows system par MS Office ya LibreOffice install nahi hai.")
-
 @app.post('/api/word-to-pdf')
 def word_to_pdf():
     docx, original = save_file('file')
-    out = OUTPUTS / (Path(original).stem + '_converted.pdf')
-    if _convert_office_to_pdf(docx, out, 'word'):
-        return send(out, out.name)
     doc = Document(str(docx))
+    out = OUTPUTS / (Path(original).stem + '_converted.pdf')
     c = canvas.Canvas(str(out), pagesize=A4)
     width, height = A4; y = height - 50
     c.setFont('Helvetica', 11)
@@ -1087,57 +987,35 @@ def pdf_to_excel():
 
 @app.post('/api/ppt-to-pdf')
 def ppt_to_pdf():
-    """Convert PowerPoint to PDF with same design/layout.
-    Important: exact layout is possible only with LibreOffice/MS Office engine.
-    The old python-pptx fallback was removed because it redraws only basic text/shapes
-    and cannot preserve real PowerPoint design, images, backgrounds, SmartArt, etc.
-    """
-    ppt = None
-    try:
-        ppt, original = save_file('file')
-        size = ppt.stat().st_size
-
-        # Render free tier memory/time safety limit
-        if size > 50 * 1024 * 1024:
-            return jsonify(error='PowerPoint file is too large. Please upload below 50MB.'), 413
-
-        out = OUTPUTS / (Path(original).stem + '_converted.pdf')
-
-        # LibreOffice / Windows COM gives the best full-fidelity conversion.
-        converted = _convert_office_to_pdf(ppt, out, 'powerpoint')
-
-        if converted and out.exists() and out.stat().st_size > 0:
-            return send(out, out.name)
-
-        return jsonify(error='PowerPoint to PDF failed: PDF file was not created.'), 500
-
-    except Exception as e:
-        traceback.print_exc()
-        return jsonify(
-            error=(
-                'PowerPoint to PDF failed. Same design/layout ke liye server par '
-                'LibreOffice Impress properly install hona zaroori hai. '
-                'Render me backend/apt.txt me libreoffice aur libreoffice-impress add karke redeploy karo. '
-                f'Details: {str(e)}'
-            )
-        ), 500
-
-    finally:
-        try:
-            if ppt and Path(ppt).exists():
-                Path(ppt).unlink(missing_ok=True)
-        except Exception:
-            pass
+    if Presentation is None:
+        return jsonify(error='python-pptx is not installed. Run pip install python-pptx'), 400
+    ppt, original = save_file('file')
+    prs = Presentation(str(ppt))
+    out = OUTPUTS/(Path(original).stem+'_converted.pdf')
+    c = canvas.Canvas(str(out), pagesize=A4)
+    width, height = A4
+    for idx, slide in enumerate(prs.slides, 1):
+        y = height - 50
+        c.setFont('Helvetica-Bold', 18); c.drawString(45, y, f'Slide {idx}'); y -= 30
+        c.setFont('Helvetica', 11)
+        for shape in slide.shapes:
+            if hasattr(shape, 'text') and shape.text:
+                for line in shape.text.splitlines():
+                    for chunk in [line[i:i+90] for i in range(0, len(line), 90)] or ['']:
+                        c.drawString(45, y, chunk); y -= 15
+                        if y < 45:
+                            c.showPage(); c.setFont('Helvetica', 11); y = height - 50
+        c.showPage()
+    c.save()
+    return send(out, out.name)
 
 @app.post('/api/excel-to-pdf')
 def excel_to_pdf():
-    xlsx, original = save_file('file')
-    out = OUTPUTS/(Path(original).stem+'_converted.pdf')
-    if _convert_office_to_pdf(xlsx, out, 'excel'):
-        return send(out, out.name)
     if load_workbook is None:
         return jsonify(error='openpyxl is not installed. Run pip install openpyxl'), 400
+    xlsx, original = save_file('file')
     wb = load_workbook(str(xlsx), data_only=True)
+    out = OUTPUTS/(Path(original).stem+'_converted.pdf')
     c = canvas.Canvas(str(out), pagesize=A4)
     width, height = A4
     for ws in wb.worksheets:
@@ -1936,6 +1814,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
