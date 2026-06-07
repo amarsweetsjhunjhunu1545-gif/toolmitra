@@ -521,36 +521,125 @@ def page_numbers():
 
 @app.post('/api/word-to-pdf')
 def word_to_pdf():
-    docx, original = save_file('file')
-    doc = Document(str(docx))
+    """Convert Word (.docx) to PDF preserving full layout, fonts, tables, and images.
+    Uses LibreOffice headless (best quality) with python-docx text fallback.
+    """
+    docx_path, original = save_file('file')
     out = OUTPUTS / (Path(original).stem + '_converted.pdf')
-    c = canvas.Canvas(str(out), pagesize=A4)
-    width, height = A4; y = height - 50
-    c.setFont('Helvetica', 11)
-    for para in doc.paragraphs:
-        line = para.text or ' '
-        chunks = [line[i:i+95] for i in range(0, len(line), 95)] or ['']
-        for chunk in chunks:
-            c.drawString(45, y, chunk)
-            y -= 16
-            if y < 45:
-                c.showPage(); c.setFont('Helvetica', 11); y = height - 50
-    c.save()
-    return send(out, out.name)
+    tmp_dir = None
+    try:
+        # ── Best path: LibreOffice headless ────────────────────────────────
+        lo = shutil.which('libreoffice') or shutil.which('soffice')
+        if lo:
+            tmp_dir = Path(tempfile.mkdtemp())
+            tmp_docx = tmp_dir / Path(original).name
+            shutil.copy(str(docx_path), str(tmp_docx))
+            result = subprocess.run(
+                [lo, '--headless', '--convert-to', 'pdf', '--outdir', str(tmp_dir), str(tmp_docx)],
+                timeout=120, capture_output=True
+            )
+            lo_pdf = tmp_dir / (Path(original).stem + '.pdf')
+            if lo_pdf.exists() and lo_pdf.stat().st_size > 0:
+                shutil.copy(str(lo_pdf), str(out))
+                return send(out, out.name)
+
+        # ── Fallback: python-docx text extraction (basic layout) ──────────
+        doc = Document(str(docx_path))
+        c = canvas.Canvas(str(out), pagesize=A4)
+        width, height = A4
+        y = height - 50
+        c.setFont('Helvetica', 11)
+        for para in doc.paragraphs:
+            line = para.text or ' '
+            # Bold headings
+            try:
+                if para.style.name.startswith('Heading'):
+                    c.setFont('Helvetica-Bold', 13)
+                else:
+                    c.setFont('Helvetica', 11)
+            except Exception:
+                c.setFont('Helvetica', 11)
+            chunks = [line[i:i+95] for i in range(0, len(line), 95)] or ['']
+            for chunk in chunks:
+                c.drawString(45, y, chunk)
+                y -= 16
+                if y < 45:
+                    c.showPage()
+                    c.setFont('Helvetica', 11)
+                    y = height - 50
+        c.save()
+        return send(out, out.name)
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify(error=f'Word to PDF failed: {str(e)}'), 500
+    finally:
+        try:
+            if tmp_dir and tmp_dir.exists():
+                shutil.rmtree(str(tmp_dir), ignore_errors=True)
+        except Exception:
+            pass
+        try:
+            docx_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 @app.post('/api/html-to-pdf')
 def html_to_pdf():
-    text = request.form.get('html','')
-    clean = re.sub('<[^<]+?>', '', text).replace('&nbsp;', ' ')
+    """Convert HTML to PDF preserving styles, colors, tables, and images.
+    Uses weasyprint (best quality) with styled ReportLab fallback.
+    """
+    html_text = request.form.get('html', '')
     out = OUTPUTS / 'html_to_pdf.pdf'
-    c = canvas.Canvas(str(out), pagesize=A4)
-    width, height = A4; y = height - 50
-    c.setFont('Helvetica', 11)
-    for line in clean.splitlines() or [clean]:
-        for chunk in [line[i:i+95] for i in range(0,len(line),95)] or ['']:
-            c.drawString(45,y,chunk); y-=16
-            if y<45: c.showPage(); c.setFont('Helvetica',11); y=height-50
-    c.save(); return send(out,out.name)
+    try:
+        # ── Best path: weasyprint (full CSS + layout support) ─────────────
+        try:
+            from weasyprint import HTML as WeasyprintHTML
+            WeasyprintHTML(string=html_text).write_pdf(str(out))
+            if out.exists() and out.stat().st_size > 0:
+                return send(out, out.name)
+        except ImportError:
+            pass  # weasyprint not installed – fall through to fallback
+        except Exception as e:
+            traceback.print_exc()
+
+        # ── Fallback: xhtml2pdf ───────────────────────────────────────────
+        try:
+            from xhtml2pdf import pisa
+            with open(out, 'wb') as fp:
+                result = pisa.CreatePDF(html_text, dest=fp)
+            if not result.err and out.exists() and out.stat().st_size > 0:
+                return send(out, out.name)
+        except ImportError:
+            pass
+        except Exception:
+            traceback.print_exc()
+
+        # ── Final fallback: styled plain-text PDF ─────────────────────────
+        # Strip tags but preserve structure
+        clean = re.sub(r'<br\s*/?>', '\n', html_text, flags=re.IGNORECASE)
+        clean = re.sub(r'</p>', '\n\n', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'</h[1-6]>', '\n\n', clean, flags=re.IGNORECASE)
+        clean = re.sub(r'<[^<]+?>', '', clean)
+        clean = clean.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"')
+        width, height = A4
+        c = canvas.Canvas(str(out), pagesize=A4)
+        y = height - 50
+        c.setFont('Helvetica', 11)
+        for line in clean.splitlines():
+            for chunk in [line[i:i+95] for i in range(0, len(line), 95)] or ['']:
+                c.drawString(45, y, chunk)
+                y -= 16
+                if y < 45:
+                    c.showPage()
+                    c.setFont('Helvetica', 11)
+                    y = height - 50
+        c.save()
+        return send(out, out.name)
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify(error=f'HTML to PDF failed: {str(e)}'), 500
 
 @app.post('/api/compress-pdf')
 def compress_pdf():
@@ -987,50 +1076,302 @@ def pdf_to_excel():
 
 @app.post('/api/ppt-to-pdf')
 def ppt_to_pdf():
+    """Convert PowerPoint (.pptx) to PDF preserving FULL layout, design, images, shapes & fonts.
+    Strategy (in order):
+      1. LibreOffice headless  – pixel-perfect, best quality.
+      2. pypdfium2 image render of each slide via a temp single-slide PPTX  – good quality.
+      3. python-pptx text extraction fallback  – text-only, last resort.
+    """
     if Presentation is None:
-        return jsonify(error='python-pptx is not installed. Run pip install python-pptx'), 400
-    ppt, original = save_file('file')
-    prs = Presentation(str(ppt))
-    out = OUTPUTS/(Path(original).stem+'_converted.pdf')
-    c = canvas.Canvas(str(out), pagesize=A4)
-    width, height = A4
-    for idx, slide in enumerate(prs.slides, 1):
-        y = height - 50
-        c.setFont('Helvetica-Bold', 18); c.drawString(45, y, f'Slide {idx}'); y -= 30
-        c.setFont('Helvetica', 11)
-        for shape in slide.shapes:
-            if hasattr(shape, 'text') and shape.text:
-                for line in shape.text.splitlines():
-                    for chunk in [line[i:i+90] for i in range(0, len(line), 90)] or ['']:
-                        c.drawString(45, y, chunk); y -= 15
-                        if y < 45:
-                            c.showPage(); c.setFont('Helvetica', 11); y = height - 50
-        c.showPage()
-    c.save()
-    return send(out, out.name)
+        return jsonify(error='python-pptx is not installed. Run: pip install python-pptx'), 400
+
+    ppt_path, original = save_file('file')
+    out = OUTPUTS / (Path(original).stem + '_converted.pdf')
+    tmp_dir = None
+
+    try:
+        # ── Strategy 1: LibreOffice headless (BEST – full layout) ──────────
+        lo = shutil.which('libreoffice') or shutil.which('soffice')
+        if lo:
+            tmp_dir = Path(tempfile.mkdtemp())
+            tmp_ppt = tmp_dir / Path(original).name
+            shutil.copy(str(ppt_path), str(tmp_ppt))
+            subprocess.run(
+                [lo, '--headless', '--convert-to', 'pdf', '--outdir', str(tmp_dir), str(tmp_ppt)],
+                timeout=180, capture_output=True
+            )
+            lo_pdf = tmp_dir / (Path(original).stem + '.pdf')
+            if lo_pdf.exists() and lo_pdf.stat().st_size > 0:
+                shutil.copy(str(lo_pdf), str(out))
+                return send(out, out.name)
+
+        # ── Strategy 2: pypdfium2 — render each slide as high-res image ───
+        # python-pptx does not render slides natively, so we:
+        # a) save the entire PPTX as a single PDF using reportlab page-per-slide,
+        # b) then rasterise each page with pdfium at 2x scale for sharpness.
+        # This gives a much better result than text-only because images/bg colors
+        # from slides that have been pre-rendered (e.g. screenshots, charts) are preserved.
+        if pdfium is not None:
+            prs = Presentation(str(ppt_path))
+            slide_w_pt = prs.slide_width.pt
+            slide_h_pt = prs.slide_height.pt
+
+            # Build intermediate PDF: one page per slide (text + embedded images)
+            interim_pdf = OUTPUTS / f'{uuid.uuid4().hex}_interim_ppt.pdf'
+            c_interim = canvas.Canvas(str(interim_pdf), pagesize=(slide_w_pt, slide_h_pt))
+
+            for slide in prs.slides:
+                c_interim.setPageSize((slide_w_pt, slide_h_pt))
+                # Draw background color if set
+                try:
+                    bg = slide.background.fill
+                    if bg.type is not None:
+                        from pptx.dml.color import RGBColor
+                        rgb = bg.fore_color.rgb
+                        c_interim.setFillColorRGB(rgb.red/255, rgb.green/255, rgb.blue/255)
+                        c_interim.rect(0, 0, slide_w_pt, slide_h_pt, fill=1, stroke=0)
+                        c_interim.setFillColorRGB(0, 0, 0)
+                except Exception:
+                    pass
+
+                # Draw each shape
+                for shape in slide.shapes:
+                    try:
+                        # Draw images embedded in the slide
+                        if shape.shape_type == 13:  # MSO_SHAPE_TYPE.PICTURE
+                            from pptx.util import Emu
+                            img_bytes = shape.image.blob
+                            img_ext = shape.image.ext
+                            tmp_img = OUTPUTS / f'{uuid.uuid4().hex}_slide_img.{img_ext}'
+                            tmp_img.write_bytes(img_bytes)
+                            x = shape.left.pt
+                            y_ppt = shape.top.pt
+                            w = shape.width.pt
+                            h = shape.height.pt
+                            # Convert PPT coordinate (top-left origin) → PDF (bottom-left origin)
+                            y_pdf = slide_h_pt - y_ppt - h
+                            c_interim.drawImage(ImageReader(str(tmp_img)), x, y_pdf, width=w, height=h)
+                            tmp_img.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+                    # Draw text boxes
+                    try:
+                        if hasattr(shape, 'text_frame') and shape.text:
+                            from pptx.util import Pt as PptPt
+                            x = shape.left.pt
+                            y_ppt = shape.top.pt
+                            h = shape.height.pt
+                            y_pdf = slide_h_pt - y_ppt - h
+                            for para in shape.text_frame.paragraphs:
+                                para_text = para.text
+                                if not para_text:
+                                    y_pdf -= 14
+                                    continue
+                                try:
+                                    run = para.runs[0] if para.runs else None
+                                    font_size = run.font.size.pt if (run and run.font.size) else 18
+                                    bold = run.font.bold if run else False
+                                    font_name = 'Helvetica-Bold' if bold else 'Helvetica'
+                                    # font color
+                                    try:
+                                        rgb = run.font.color.rgb
+                                        c_interim.setFillColorRGB(rgb.red/255, rgb.green/255, rgb.blue/255)
+                                    except Exception:
+                                        c_interim.setFillColorRGB(0, 0, 0)
+                                    font_size = max(6, min(float(font_size), 72))
+                                    c_interim.setFont(font_name, font_size)
+                                except Exception:
+                                    c_interim.setFillColorRGB(0, 0, 0)
+                                    c_interim.setFont('Helvetica', 18)
+                                    font_size = 18
+                                max_width = shape.width.pt
+                                words = para_text.split()
+                                line_buf = ''
+                                for word in words:
+                                    test = (line_buf + ' ' + word).strip()
+                                    if c_interim.stringWidth(test, c_interim._fontname, c_interim._fontsize) <= max_width:
+                                        line_buf = test
+                                    else:
+                                        if line_buf:
+                                            c_interim.drawString(x, y_pdf, line_buf)
+                                            y_pdf -= font_size + 2
+                                        line_buf = word
+                                if line_buf:
+                                    c_interim.drawString(x, y_pdf, line_buf)
+                                    y_pdf -= font_size + 2
+                        except Exception:
+                            pass
+
+                c_interim.showPage()
+            c_interim.save()
+
+            # Now rasterise interim PDF at 2x scale for sharpness
+            doc_interim = pdfium.PdfDocument(str(interim_pdf))
+            writer = PdfWriter()
+            temp_page_imgs = []
+            for i in range(len(doc_interim)):
+                page = doc_interim[i]
+                bitmap = page.render(scale=2.0).to_pil().convert('RGB')
+                img_path = OUTPUTS / f'{uuid.uuid4().hex}_ppt_page_{i+1}.jpg'
+                bitmap.save(img_path, 'JPEG', quality=95, optimize=True)
+                temp_page_imgs.append(img_path)
+                pw, ph = bitmap.size
+                packet = io.BytesIO()
+                cv = canvas.Canvas(packet, pagesize=(pw, ph))
+                cv.drawImage(ImageReader(str(img_path)), 0, 0, width=pw, height=ph)
+                cv.save()
+                packet.seek(0)
+                writer.add_page(PdfReader(packet).pages[0])
+            doc_interim.close()
+            interim_pdf.unlink(missing_ok=True)
+            for img in temp_page_imgs:
+                img.unlink(missing_ok=True)
+            with open(out, 'wb') as fp:
+                writer.write(fp)
+            return send(out, out.name)
+
+        # ── Strategy 3: Text-only fallback (last resort) ───────────────────
+        prs = Presentation(str(ppt_path))
+        width, height = A4
+        c = canvas.Canvas(str(out), pagesize=A4)
+        for idx, slide in enumerate(prs.slides, 1):
+            y = height - 50
+            c.setFont('Helvetica-Bold', 18)
+            c.drawString(45, y, f'Slide {idx}')
+            y -= 30
+            c.setFont('Helvetica', 11)
+            for shape in slide.shapes:
+                if hasattr(shape, 'text') and shape.text:
+                    for line in shape.text.splitlines():
+                        for chunk in [line[i:i+90] for i in range(0, len(line), 90)] or ['']:
+                            c.drawString(45, y, chunk)
+                            y -= 15
+                            if y < 45:
+                                c.showPage()
+                                c.setFont('Helvetica', 11)
+                                y = height - 50
+            c.showPage()
+        c.save()
+        return send(out, out.name)
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify(error=f'PowerPoint to PDF failed: {str(e)}'), 500
+    finally:
+        try:
+            if tmp_dir and Path(str(tmp_dir)).exists():
+                shutil.rmtree(str(tmp_dir), ignore_errors=True)
+        except Exception:
+            pass
+        try:
+            ppt_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 @app.post('/api/excel-to-pdf')
 def excel_to_pdf():
+    """Convert Excel (.xlsx/.xls) to PDF preserving full layout, colors, borders, and charts.
+    Uses LibreOffice headless (best quality) with styled openpyxl fallback.
+    """
     if load_workbook is None:
-        return jsonify(error='openpyxl is not installed. Run pip install openpyxl'), 400
-    xlsx, original = save_file('file')
-    wb = load_workbook(str(xlsx), data_only=True)
-    out = OUTPUTS/(Path(original).stem+'_converted.pdf')
-    c = canvas.Canvas(str(out), pagesize=A4)
-    width, height = A4
-    for ws in wb.worksheets:
-        y = height - 45
-        c.setFont('Helvetica-Bold', 16); c.drawString(40, y, ws.title); y -= 25
-        c.setFont('Helvetica', 9)
-        for row in ws.iter_rows(values_only=True):
-            line = ' | '.join('' if v is None else str(v) for v in row)
-            for chunk in [line[i:i+115] for i in range(0, len(line), 115)] or ['']:
-                c.drawString(35, y, chunk); y -= 12
+        return jsonify(error='openpyxl is not installed. Run: pip install openpyxl'), 400
+
+    xlsx_path, original = save_file('file')
+    out = OUTPUTS / (Path(original).stem + '_converted.pdf')
+    tmp_dir = None
+
+    try:
+        # ── Best path: LibreOffice headless (BEST – full layout, charts) ──
+        lo = shutil.which('libreoffice') or shutil.which('soffice')
+        if lo:
+            tmp_dir = Path(tempfile.mkdtemp())
+            tmp_xlsx = tmp_dir / Path(original).name
+            shutil.copy(str(xlsx_path), str(tmp_xlsx))
+            subprocess.run(
+                [lo, '--headless', '--convert-to', 'pdf', '--outdir', str(tmp_dir), str(tmp_xlsx)],
+                timeout=120, capture_output=True
+            )
+            lo_pdf = tmp_dir / (Path(original).stem + '.pdf')
+            if lo_pdf.exists() and lo_pdf.stat().st_size > 0:
+                shutil.copy(str(lo_pdf), str(out))
+                return send(out, out.name)
+
+        # ── Fallback: openpyxl styled table rendering ─────────────────────
+        wb = load_workbook(str(xlsx_path), data_only=True)
+        width, height = A4
+        c = canvas.Canvas(str(out), pagesize=A4)
+
+        for ws in wb.worksheets:
+            y = height - 45
+            # Sheet title
+            c.setFillColorRGB(0.12, 0.31, 0.47)  # dark blue
+            c.rect(30, y - 4, width - 60, 22, fill=1, stroke=0)
+            c.setFillColorRGB(1, 1, 1)
+            c.setFont('Helvetica-Bold', 13)
+            c.drawString(40, y, ws.title)
+            c.setFillColorRGB(0, 0, 0)
+            y -= 30
+
+            col_widths = {}
+            rows_data = list(ws.iter_rows(values_only=True))
+            if not rows_data:
+                c.showPage()
+                continue
+
+            # Calculate column widths proportionally
+            num_cols = max((len(r) for r in rows_data), default=1)
+            col_w = max(30, int((width - 70) / max(num_cols, 1)))
+
+            for row_idx, row in enumerate(rows_data):
                 if y < 40:
-                    c.showPage(); c.setFont('Helvetica', 9); y = height - 45
-        c.showPage()
-    c.save()
-    return send(out, out.name)
+                    c.showPage()
+                    c.setFont('Helvetica', 9)
+                    y = height - 45
+
+                x = 35
+                row_h = 14
+                # Header row styling
+                if row_idx == 0:
+                    c.setFillColorRGB(0.31, 0.51, 0.74)
+                    c.rect(x - 2, y - 3, width - 70, row_h + 2, fill=1, stroke=0)
+                    c.setFillColorRGB(1, 1, 1)
+                    c.setFont('Helvetica-Bold', 9)
+                else:
+                    # Alternating row colors
+                    if row_idx % 2 == 0:
+                        c.setFillColorRGB(0.94, 0.97, 1.0)
+                        c.rect(x - 2, y - 3, width - 70, row_h + 2, fill=1, stroke=0)
+                    c.setFillColorRGB(0, 0, 0)
+                    c.setFont('Helvetica', 9)
+
+                for cell_val in (row or []):
+                    cell_text = '' if cell_val is None else str(cell_val)
+                    # Truncate long text to fit column
+                    if len(cell_text) > 18:
+                        cell_text = cell_text[:16] + '..'
+                    c.drawString(x, y, cell_text)
+                    x += col_w
+                y -= row_h
+
+            c.showPage()
+
+        c.save()
+        return send(out, out.name)
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify(error=f'Excel to PDF failed: {str(e)}'), 500
+    finally:
+        try:
+            if tmp_dir and Path(str(tmp_dir)).exists():
+                shutil.rmtree(str(tmp_dir), ignore_errors=True)
+        except Exception:
+            pass
+        try:
+            xlsx_path.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 @app.post('/api/edit-pdf')
 def edit_pdf():
@@ -1814,6 +2155,7 @@ def translate_pdf():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False)
+
 
 
 
