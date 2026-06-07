@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-set -e
 
 echo "==> Installing system packages..."
-apt-get update -y
+apt-get update -y || true
 apt-get install -y --no-install-recommends \
     libreoffice \
     libreoffice-writer \
@@ -14,7 +13,7 @@ apt-get install -y --no-install-recommends \
     ghostscript \
     fonts-liberation \
     fonts-dejavu \
-    fonts-noto
+    fonts-noto || true
 
 echo "==> Installing Python packages..."
 pip install --upgrade pip
