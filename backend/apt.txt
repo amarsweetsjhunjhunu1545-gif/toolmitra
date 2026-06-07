@@ -1,6 +1,9 @@
 qpdf
 ghostscript
 libreoffice
+libreoffice-impress
+libreoffice-writer
+libreoffice-calc
 
 fonts-noto-core
 fonts-noto-extra
