@@ -3,5 +3,10 @@ services:
     name: toolmitra-backend
     env: python
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      apt-get update -y &&
+      apt-get install -y libreoffice libreoffice-writer libreoffice-impress libreoffice-calc
+      apt-get install -y tesseract-ocr tesseract-ocr-eng
+      apt-get install -y poppler-utils ghostscript fonts-liberation fonts-dejavu
+      pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 300 --workers 1
