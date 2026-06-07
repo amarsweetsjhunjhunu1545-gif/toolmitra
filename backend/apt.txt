@@ -7,3 +7,7 @@ fonts-noto-extra
 fonts-lohit-deva
 fonts-dejavu-core
 fonts-liberation
+libreoffice-impress
+libreoffice-writer
+fonts-dejavu
+fonts-liberation
