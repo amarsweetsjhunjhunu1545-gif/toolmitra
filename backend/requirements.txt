@@ -17,5 +17,8 @@ requests
 deep-translator
 weasyprint
 xhtml2pdf
+pytesseract
+ocrmypdf
+
 
 
