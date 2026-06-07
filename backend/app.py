@@ -142,7 +142,23 @@ def home():
 
 @app.get('/api/health')
 def health():
-    return jsonify(status='ok', backend='ToolMitra', pdf2docx=bool(Converter), tesseract=bool(pytesseract))
+    lo = shutil.which('libreoffice') or shutil.which('soffice')
+    tess = shutil.which('tesseract')
+    return jsonify(
+        status='ok',
+        backend='ToolMitra',
+        libreoffice=bool(lo),
+        libreoffice_path=lo,
+        tesseract=bool(tess),
+        tesseract_path=tess,
+        pdf2docx=bool(Converter),
+        pypdfium2=bool(pdfium),
+        pytesseract=bool(pytesseract),
+        python_pptx=bool(Presentation),
+        openpyxl=bool(Workbook),
+        pymupdf=bool(fitz),
+    )
+
 
 @app.route('/api/pdf-to-word', methods=['POST', 'OPTIONS'])
 def pdf_to_word():
@@ -1076,11 +1092,12 @@ def pdf_to_excel():
 
 @app.post('/api/ppt-to-pdf')
 def ppt_to_pdf():
-    """Convert PowerPoint (.pptx) to PDF preserving FULL layout, design, images, shapes & fonts.
-    Strategy (in order):
-      1. LibreOffice headless  – pixel-perfect, best quality.
-      2. pypdfium2 image render of each slide via a temp single-slide PPTX  – good quality.
-      3. python-pptx text extraction fallback  – text-only, last resort.
+    """Convert PowerPoint (.pptx) to PDF.
+    Strategy 1: LibreOffice headless – pixel-perfect (used when available).
+    Strategy 2: python-pptx text extraction – lightweight, works on all servers.
+    NOTE: The pypdfium2 image-rendering strategy was removed because it caused
+    out-of-memory kills on Render's 512MB free tier (ReportLab asciiBase85Encode
+    exhausts RAM on image-heavy slides).
     """
     if Presentation is None:
         return jsonify(error='python-pptx is not installed. Run: pip install python-pptx'), 400
@@ -1090,7 +1107,7 @@ def ppt_to_pdf():
     tmp_dir = None
 
     try:
-        # ── Strategy 1: LibreOffice headless (BEST – full layout) ──────────
+        # ── Strategy 1: LibreOffice headless (BEST – full layout, images, fonts) ─
         lo = shutil.which('libreoffice') or shutil.which('soffice')
         if lo:
             tmp_dir = Path(tempfile.mkdtemp())
@@ -1105,168 +1122,68 @@ def ppt_to_pdf():
                 shutil.copy(str(lo_pdf), str(out))
                 return send(out, out.name)
 
-        # ── Strategy 2: pypdfium2 — render each slide as high-res image ───
-        if pdfium is not None:
-            try:
-                prs = Presentation(str(ppt_path))
-                slide_w_pt = float(prs.slide_width.pt) or 720.0
-                slide_h_pt = float(prs.slide_height.pt) or 540.0
-
-                interim_pdf = OUTPUTS / f'{uuid.uuid4().hex}_interim_ppt.pdf'
-                c_interim = canvas.Canvas(str(interim_pdf), pagesize=(slide_w_pt, slide_h_pt))
-
-                for slide in prs.slides:
-                    c_interim.setPageSize((slide_w_pt, slide_h_pt))
-
-                    # Draw background color if set
-                    try:
-                        bg = slide.background.fill
-                        if bg.type is not None:
-                            rgb = bg.fore_color.rgb
-                            c_interim.setFillColorRGB(rgb.red/255, rgb.green/255, rgb.blue/255)
-                            c_interim.rect(0, 0, slide_w_pt, slide_h_pt, fill=1, stroke=0)
-                            c_interim.setFillColorRGB(0, 0, 0)
-                    except Exception:
-                        pass
-
-                    # Draw each shape
-                    for shape in slide.shapes:
-                        # Draw images embedded in the slide
-                        try:
-                            if shape.shape_type == 13:  # MSO_SHAPE_TYPE.PICTURE
-                                img_bytes = shape.image.blob
-                                img_ext = shape.image.ext or 'png'
-                                tmp_img = OUTPUTS / f'{uuid.uuid4().hex}_slide_img.{img_ext}'
-                                tmp_img.write_bytes(img_bytes)
-                                x = float(shape.left.pt)
-                                y_ppt = float(shape.top.pt)
-                                w = float(shape.width.pt)
-                                h = float(shape.height.pt)
-                                y_pdf = slide_h_pt - y_ppt - h
-                                c_interim.drawImage(ImageReader(str(tmp_img)), x, y_pdf, width=w, height=h, mask='auto')
-                                tmp_img.unlink(missing_ok=True)
-                        except Exception:
-                            pass
-
-                        # Draw text boxes
-                        try:
-                            if hasattr(shape, 'text_frame') and shape.text:
-                                x = float(shape.left.pt)
-                                y_ppt = float(shape.top.pt)
-                                h = float(shape.height.pt)
-                                max_width = float(shape.width.pt) or slide_w_pt
-                                y_pdf = slide_h_pt - y_ppt - h
-
-                                for para in shape.text_frame.paragraphs:
-                                    para_text = para.text
-                                    if not para_text:
-                                        y_pdf -= 14
-                                        continue
-
-                                    # Track font explicitly
-                                    cur_font = 'Helvetica'
-                                    cur_size = 18.0
-                                    try:
-                                        run = para.runs[0] if para.runs else None
-                                        if run and run.font.size:
-                                            cur_size = float(run.font.size.pt)
-                                        if run and run.font.bold:
-                                            cur_font = 'Helvetica-Bold'
-                                        cur_size = max(6.0, min(cur_size, 72.0))
-                                        # font color
-                                        try:
-                                            rgb = run.font.color.rgb
-                                            c_interim.setFillColorRGB(rgb.red/255, rgb.green/255, rgb.blue/255)
-                                        except Exception:
-                                            c_interim.setFillColorRGB(0, 0, 0)
-                                        c_interim.setFont(cur_font, cur_size)
-                                    except Exception:
-                                        c_interim.setFillColorRGB(0, 0, 0)
-                                        c_interim.setFont('Helvetica', 18)
-                                        cur_font = 'Helvetica'
-                                        cur_size = 18.0
-
-                                    # Word-wrap using explicit font vars
-                                    words = para_text.split()
-                                    line_buf = ''
-                                    for word in words:
-                                        test = (line_buf + ' ' + word).strip()
-                                        try:
-                                            w_test = c_interim.stringWidth(test, cur_font, cur_size)
-                                        except Exception:
-                                            w_test = len(test) * cur_size * 0.5
-                                        if w_test <= max_width:
-                                            line_buf = test
-                                        else:
-                                            if line_buf:
-                                                c_interim.drawString(x, y_pdf, line_buf)
-                                                y_pdf -= cur_size + 2
-                                            line_buf = word
-                                    if line_buf:
-                                        c_interim.drawString(x, y_pdf, line_buf)
-                                        y_pdf -= cur_size + 2
-                        except Exception:
-                            pass
-
-                    c_interim.showPage()
-                c_interim.save()
-
-                # Rasterise interim PDF at 2x scale for sharpness
-                doc_interim = pdfium.PdfDocument(str(interim_pdf))
-                writer = PdfWriter()
-                temp_page_imgs = []
-                for i in range(len(doc_interim)):
-                    page = doc_interim[i]
-                    bitmap = page.render(scale=2.0).to_pil().convert('RGB')
-                    img_path = OUTPUTS / f'{uuid.uuid4().hex}_ppt_page_{i+1}.jpg'
-                    bitmap.save(img_path, 'JPEG', quality=95, optimize=True)
-                    temp_page_imgs.append(img_path)
-                    pw, ph = bitmap.size
-                    packet = io.BytesIO()
-                    cv = canvas.Canvas(packet, pagesize=(pw, ph))
-                    cv.drawImage(ImageReader(str(img_path)), 0, 0, width=pw, height=ph)
-                    cv.save()
-                    packet.seek(0)
-                    writer.add_page(PdfReader(packet).pages[0])
-                doc_interim.close()
-                try:
-                    interim_pdf.unlink(missing_ok=True)
-                except Exception:
-                    pass
-                for img in temp_page_imgs:
-                    try:
-                        img.unlink(missing_ok=True)
-                    except Exception:
-                        pass
-                with open(out, 'wb') as fp:
-                    writer.write(fp)
-                return send(out, out.name)
-
-            except Exception:
-                traceback.print_exc()
-                # Strategy 2 failed — fall through to Strategy 3 (text only)
-
-        # ── Strategy 3: Text-only fallback (always works) ─────────────────
+        # ── Strategy 2: python-pptx text extraction (lightweight fallback) ────────
+        # Intentionally avoids loading images into memory to prevent OOM on free tier.
         prs = Presentation(str(ppt_path))
+        slide_count = len(prs.slides)
         width, height = A4
         c = canvas.Canvas(str(out), pagesize=A4)
+
         for idx, slide in enumerate(prs.slides, 1):
-            y = height - 50
-            c.setFont('Helvetica-Bold', 18)
-            c.drawString(45, y, f'Slide {idx}')
-            y -= 30
-            c.setFont('Helvetica', 11)
+            y = height - 40
+            # Slide header bar
+            c.setFillColorRGB(0.13, 0.29, 0.53)
+            c.rect(0, height - 50, width, 50, fill=1, stroke=0)
+            c.setFillColorRGB(1, 1, 1)
+            c.setFont('Helvetica-Bold', 14)
+            c.drawString(30, height - 35, f'Slide {idx} / {slide_count}')
+            # Slide title (first text shape that looks like a title)
+            try:
+                title_shape = slide.shapes.title
+                if title_shape and title_shape.text.strip():
+                    title_text = title_shape.text.strip()[:100]
+                    c.setFont('Helvetica-Bold', 11)
+                    c.drawString(200, height - 35, title_text)
+            except Exception:
+                pass
+            c.setFillColorRGB(0, 0, 0)
+            y = height - 70
+
             for shape in slide.shapes:
-                if hasattr(shape, 'text') and shape.text:
-                    for line in shape.text.splitlines():
-                        for chunk in [line[i:i+90] for i in range(0, len(line), 90)] or ['']:
-                            c.drawString(45, y, chunk)
-                            y -= 15
-                            if y < 45:
-                                c.showPage()
-                                c.setFont('Helvetica', 11)
-                                y = height - 50
+                if not (hasattr(shape, 'text') and shape.text):
+                    continue
+                text = shape.text.strip()
+                if not text:
+                    continue
+                # Shape label for context
+                try:
+                    is_title = (shape == slide.shapes.title)
+                except Exception:
+                    is_title = False
+
+                if is_title:
+                    c.setFont('Helvetica-Bold', 16)
+                    line_h = 20
+                else:
+                    c.setFont('Helvetica', 11)
+                    line_h = 15
+
+                for line in text.splitlines():
+                    line = line.strip()
+                    if not line:
+                        y -= int(line_h * 0.5)
+                        continue
+                    for chunk in [line[i:i+90] for i in range(0, len(line), 90)] or ['']:
+                        c.drawString(30, y, chunk)
+                        y -= line_h
+                        if y < 40:
+                            c.showPage()
+                            c.setFont('Helvetica', 11)
+                            y = height - 30
+                y -= 6  # spacing between shapes
+
             c.showPage()
+
         c.save()
         return send(out, out.name)
 
